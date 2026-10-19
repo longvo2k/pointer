@@ -21,8 +21,10 @@ screen.
 
 [![An agent drives a real Chrome tab: it clicks a plan, fills an email, creates a workspace, and copies the invite link, with the pointer and action labels visible](demo/pointer-demo.gif)](demo/pointer-demo.mp4)
 
-<sub>Left: the CLI. Right: the page, with Pointer's cursor and action labels drawn by the extension.
-[Watch the full 32s MP4](demo/pointer-demo.mp4).</sub>
+https://github.com/user-attachments/assets/e8df2fb0-d19f-4ba1-b4aa-2581bf8e3aef
+
+<sub>14s GIF preview, then the full 32s walkthrough. Left: the CLI. Right: the page, with Pointer's
+cursor and action labels drawn by the extension. [MP4 file](demo/pointer-demo.mp4).</sub>
 
 ## How it works
 
