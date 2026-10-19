@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Resolve the Pointer checkout from this skill's location, even when the skill
+# directory is symlinked (e.g. ~/.claude/skills/pointer -> <repo>/skills/pointer).
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+root="$(cd "$here/../../.." && pwd -P)"
+
+# Allow an explicit override for unusual installs.
+if [ -n "${POINTER_ROOT:-}" ]; then
+  root="$POINTER_ROOT"
+fi
+
+if [ ! -f "$root/bin/pointer.mjs" ]; then
+  echo "✗ Could not find bin/pointer.mjs under $root" >&2
+  echo "  Set POINTER_ROOT to the Pointer checkout and call node \$POINTER_ROOT/bin/pointer.mjs directly." >&2
+  exit 1
+fi
+
+exec node "$root/bin/pointer.mjs" "$@"
