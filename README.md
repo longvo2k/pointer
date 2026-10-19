@@ -27,27 +27,44 @@ agent (MCP or CLI)
 
 ## Install
 
+One command:
+
 ```bash
-cd pointer
-npm install
+curl -fsSL https://raw.githubusercontent.com/longvo2k/pointer/main/install.sh | bash
 ```
 
-1. Start the hub (any command auto-starts it, but this is the explicit way):
+It clones into `~/.pointer`, installs dependencies, links `pointer` and `pointer-mcp` into
+`~/.local/bin`, and opens `chrome://extensions` with the extension folder revealed. Re-run it any
+time to update. Set `POINTER_DIR` to install elsewhere, or `POINTER_NO_OPEN=1` to skip opening Chrome.
 
-   ```bash
-   node bin/pointer.mjs serve
-   ```
+Then load the extension once — Chrome does not let a page install an unpacked extension for you:
 
-2. Load the extension: `chrome://extensions` → **Developer mode** → **Load unpacked** → pick `pointer/extension`.
-   The toolbar badge shows **on** when it is connected.
+1. `chrome://extensions` → **Developer mode** → **Load unpacked**
+2. choose `~/.pointer/extension`
 
-3. Check the wiring:
+The toolbar badge shows **on** when it is connected. Check the wiring:
 
-   ```bash
-   node bin/pointer.mjs status
-   node bin/pointer.mjs open news.ycombinator.com
-   node bin/pointer.mjs snap
-   ```
+```bash
+pointer status
+pointer open news.ycombinator.com
+pointer snap
+```
+
+`pointer setup` reopens the extension page, copies the folder path, and prints an MCP config with
+your actual paths.
+
+<details>
+<summary>From a checkout (development)</summary>
+
+```bash
+git clone https://github.com/longvo2k/pointer && cd pointer
+npm install
+node bin/pointer.mjs setup
+```
+
+Then use `node bin/pointer.mjs …` in place of `pointer …` below.
+
+</details>
 
 ### Several Chrome windows, or an updated extension
 
@@ -56,8 +73,8 @@ others connected but idle. That is deliberate — silently switching browsers wo
 different session. Check and choose explicitly:
 
 ```bash
-node bin/pointer.mjs browsers
-node bin/pointer.mjs use 3f9c1a2b
+pointer browsers
+pointer use 3f9c1a2b
 ```
 
 Each line shows a short connection id, the build, and whether it is active.
@@ -78,10 +95,16 @@ gets a fresh id and avoids that. `pointer reload` asks every connected extension
   "mcpServers": {
     "pointer": {
       "command": "node",
-      "args": ["/absolute/path/to/pointer/bin/mcp.mjs"]
+      "args": ["/Users/you/.pointer/bin/mcp.mjs"]
     }
   }
 }
+```
+
+Run `pointer setup` to print this snippet with your real path, or with Claude Code:
+
+```bash
+claude mcp add pointer -- node ~/.pointer/bin/mcp.mjs
 ```
 
 Tools: `browser_status`, `tabs_list`, `tab_open`, `tab_focus`, `snapshot`, `click`, `fill`, `press`,

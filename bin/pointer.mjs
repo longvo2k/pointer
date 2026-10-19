@@ -15,18 +15,21 @@
  *   pointer text             read the page as text
  *   pointer shot [path]      screenshot (saves PNG, prints path)
  *   pointer stop             hide the pointer and stop
+ *   pointer setup            show install paths and open chrome://extensions
  *
- * Any command except `serve` auto-starts the hub if it is not already running.
+ * Any command except `setup` and `serve` auto-starts the hub if it is not already running.
  */
 
-import { writeFileSync } from "node:fs";
-import { spawn } from "node:child_process";
+import { existsSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { Hub, health } from "../lib/hub.mjs";
 import { TOOLS, callTool } from "../lib/tools.mjs";
 
 const PORT = Number(process.env.POINTER_PORT || 8790);
+const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const argv = process.argv.slice(2);
 const jsonOut = argv.includes("--json");
 const args = argv.filter((a) => a !== "--json");
@@ -79,9 +82,83 @@ function fail(err) {
   process.exitCode = 1;
 }
 
+function openExternal(cmd, args, opts) {
+  try {
+    return spawnSync(cmd, args, { stdio: "ignore", ...opts }).status === 0;
+  } catch {
+    return false;
+  }
+}
+
+/** Print the install layout and get the human to the extension folder. */
+function setup(open) {
+  const ext = path.join(ROOT, "extension");
+  const mcp = path.join(ROOT, "bin", "mcp.mjs");
+
+  console.log("Pointer install");
+  console.log("  checkout   " + ROOT);
+  console.log("  extension  " + ext);
+  console.log("  MCP        node " + mcp);
+  console.log("");
+
+  if (!existsSync(ext)) {
+    console.error("✗ extension/ is missing from this checkout");
+    process.exitCode = 1;
+    return;
+  }
+
+  let opened = false;
+  let copied = false;
+
+  if (open) {
+    if (process.platform === "darwin") {
+      const chrome = ["Google Chrome", "Google Chrome Beta", "Chromium", "Microsoft Edge"]
+        .find((app) => openExternal("open", ["-Ra", app]));
+      if (chrome) opened = openExternal("open", ["-a", chrome, "chrome://extensions"]);
+      openExternal("open", ["-R", ext]);
+      copied = openExternal("pbcopy", [], { input: ext });
+    } else if (process.platform === "linux") {
+      opened = openExternal("xdg-open", ["chrome://extensions"]);
+      openExternal("xdg-open", [ext]);
+    } else if (process.platform === "win32") {
+      opened = openExternal("cmd", ["/c", "start", "", "chrome", "chrome://extensions"]);
+      openExternal("explorer", [ext]);
+    }
+  }
+
+  console.log("Load the Chrome extension (once):");
+  console.log("  1. open chrome://extensions" + (opened ? " (opened for you)" : ""));
+  console.log("  2. turn on Developer mode");
+  console.log("  3. Load unpacked → choose the extension folder above");
+  if (copied) console.log("     (path copied to clipboard)");
+  console.log("");
+  console.log("Check the wiring:");
+  console.log("  pointer status");
+  console.log("  pointer open news.ycombinator.com");
+  console.log("");
+  console.log("Connect an MCP agent (Claude Code, Cursor, OpenCode, …):");
+  console.log(
+    JSON.stringify(
+      { mcpServers: { pointer: { command: process.execPath, args: [mcp] } } },
+      null,
+      2
+    )
+  );
+  if (openExternal("which", ["claude"])) {
+    console.log("");
+    console.log("Or register it with Claude Code directly:");
+    console.log(`  claude mcp add pointer -- ${process.execPath} ${mcp}`);
+  }
+}
+
 async function main() {
   if (!cmd || cmd === "help" || cmd === "--help" || cmd === "-h") {
     console.log(usage());
+    return;
+  }
+
+  if (cmd === "setup") {
+    setup(!args.includes("--no-open"));
     return;
   }
 
@@ -96,7 +173,7 @@ async function main() {
     const hub = new Hub({ port: PORT, log: (m) => console.log("[hub] " + m) });
     await hub.start();
     console.log(`pointer hub ready on http://127.0.0.1:${PORT}`);
-    console.log("Load extension/ at chrome://extensions (Developer mode → Load unpacked).");
+    console.log("Run `pointer setup` to open chrome://extensions and show the extension folder.");
     const shutdown = async () => {
       await hub.stop();
       process.exit(0);
@@ -204,6 +281,7 @@ function usage() {
   pointer text                  page as readable text
   pointer shot [path]           screenshot (pointer included)
   pointer stop                  hide pointer, stop acting
+  pointer setup [--no-open]     show install paths, open chrome://extensions
 
   env: POINTER_PORT (8790), POINTER_FOCUS_WINDOW=0, POINTER_AGENT=<name>`;
 }
