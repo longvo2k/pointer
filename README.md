@@ -20,6 +20,11 @@ extension that acts in the tab you already have, with every move drawn on screen
 - **No focus stealing** — only `tab_open` and `tab_focus` bring a tab forward. Snapshot, click, fill,
   scroll, read, and screenshot keep working while you are in another tab or window.
 
+[![An agent drives a real Chrome tab: it clicks a plan, fills an email, creates a workspace, and copies the invite link, with the pointer and action labels visible](demo/pointer-demo.gif)](demo/pointer-demo.mp4)
+
+<sub>Left: the CLI. Right: the page, with Pointer's cursor and action labels drawn by the extension.
+[Watch the full 32s MP4](demo/pointer-demo.mp4).</sub>
+
 ## How it works
 
 ```
@@ -174,7 +179,7 @@ The code follows the trust boundary, not the feature list. `extension/` is the o
 inside Chrome: the service worker owns the hub connection and the debugger session, while the content
 script owns snapshots and the overlay. `lib/` is the local hub and the shared tool layer; `bin/`
 exposes those tools as a CLI and an MCP stdio server. `skills/pointer/` is the agent-facing policy
-layer.
+layer, and `demo/` holds the recorded walkthrough in the README.
 
 When adding behavior, keep that boundary: browser mechanics go in the extension, new tools and their
 formatting in `lib/tools.mjs`, and agent guidance in the skill. The hub should stay a router — it is
