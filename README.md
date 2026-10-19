@@ -2,15 +2,25 @@
 
 Drive the human's real Chrome tab from any agent, with a pointer they can watch.
 
-- **Any agent** — one MCP server for Claude Code / Cursor / OpenCode / Codex, plus a plain CLI for shell-first agents.
-- **Your browser, your logins** — a Chrome extension drives the tab you already have open. No separate Chromium profile, no re-login, no bot fingerprint.
-- **Visible intent** — before a click lands, the cursor slides to the target with a label ("click · Sign Up") and a ripple. You always know what it is doing.
-- **Agent tab group** — every tab the agent drives is moved into a Chrome tab group named after the agent (e.g. **Claude**), so agent tabs are obvious at a glance. The tab title carries the same badge.
-- **Trusted input** — clicks and keys go through CDP (`chrome.debugger`), not synthetic DOM events, so React handlers and pointer checks behave.
-- **Human override** — `Esc` or a real click on the page stops the agent, and the next tool call tells the agent to ask first.
+Agents stall at the same boundary: the page they need is already open and signed in, in the browser
+the human is using. A second browser profile means another login and a different session; a headless
+browser cannot touch it at all. Pointer bridges that gap instead — a local hub plus a Chrome
+extension that acts in the tab you already have, with every move drawn on screen.
+
+- **Any agent, your browser** — one MCP server for Claude Code / Cursor / OpenCode / Codex, plus a
+  plain CLI. The extension drives the tab you already have open: no second profile, no re-login, no
+  bot fingerprint.
+- **Visible intent** — before a click lands, the cursor slides to the target with a label
+  ("click · Sign Up") and a ripple. `Esc` or a real click on the page stops the agent; the next tool
+  call tells it to ask first.
+- **Trusted input** — clicks and keys go through CDP (`chrome.debugger`), not synthetic DOM events,
+  so React handlers and pointer checks behave.
+- **Agent tabs are obvious** — every tab the agent drives moves into a Chrome tab group named after
+  the agent (e.g. **Claude**), and the tab title carries the same badge.
 - **No focus stealing** — only `tab_open` and `tab_focus` bring a tab forward. Snapshot, click, fill,
-  scroll, read, and screenshot keep working while you are in another tab or window, and the agent's
-  tab is marked in its title (e.g. `Claude · PAVE Inspect`) so you can find it at a glance.
+  scroll, read, and screenshot keep working while you are in another tab or window.
+
+## How it works
 
 ```
 agent (MCP or CLI)
@@ -24,6 +34,10 @@ agent (MCP or CLI)
       ▼
  your tab  ── overlay: pointer, label, ripple, target outline
 ```
+
+The extension is the only part that touches Chrome: it holds the hub connection, the
+`chrome.debugger` session, and the on-page overlay. The hub routes each tool call to the one active
+browser and tab; the CLI and the MCP server are two front doors to the same tools.
 
 ## Install
 
@@ -66,7 +80,7 @@ Then use `node bin/pointer.mjs …` in place of `pointer …` below.
 
 </details>
 
-### Several Chrome windows, or an updated extension
+### Multiple browsers and extension reloads
 
 If more than one Chrome profile has Pointer loaded, the hub keeps the first one it saw and leaves the
 others connected but idle. That is deliberate — silently switching browsers would send clicks to a
@@ -131,11 +145,9 @@ pointer browsers
 pointer use 3f9c1a2b
 ```
 
-## What it deliberately does not do
+## Design boundaries
 
 - **No iframes / shadow DOM refs yet.** Snapshot covers the top frame and open shadow roots are not traversed.
-- **No focus stealing.** `tab_open` and `tab_focus` bring a tab forward by design. Every other action
-  runs in the agent's tab even when you are working elsewhere; the tab title carries the agent badge.
 - **No `eval` tool.** Arbitrary JS in a logged-in tab is the fastest way to turn a bug into an incident.
 - **One active browser at a time.** If several Chrome profiles run the extension, the hub keeps the
   first one active instead of silently switching; `pointer browsers` lists them and `pointer use <id>`
@@ -156,21 +168,29 @@ Start a new session so the skill appears in the agent's skill list. The bundled
 `skills/pointer/scripts/pointer` wrapper resolves the checkout from its own location, so the same
 skill works linked from a skills directory, copied into a project, or run from the repo.
 
-## Files
+## Where the code lives
 
-```
-extension/   manifest, service worker (bridge + trusted input), content script (snapshot + overlay)
-lib/hub.mjs  ws/http hub, request routing, stop events
-lib/tools.mjs  tool definitions and formatting (shared by MCP + CLI)
-bin/pointer.mjs  CLI + hub launcher
-bin/mcp.mjs      MCP stdio server
-skills/pointer/   agent skill (SKILL.md + wrapper that finds the checkout)
-```
+The code follows the trust boundary, not the feature list. `extension/` is the only part that runs
+inside Chrome: the service worker owns the hub connection and the debugger session, while the content
+script owns snapshots and the overlay. `lib/` is the local hub and the shared tool layer; `bin/`
+exposes those tools as a CLI and an MCP stdio server. `skills/pointer/` is the agent-facing policy
+layer.
 
-## Env
+When adding behavior, keep that boundary: browser mechanics go in the extension, new tools and their
+formatting in `lib/tools.mjs`, and agent guidance in the skill. The hub should stay a router — it is
+the only place that knows which browser and tab are active.
+
+## Configuration
 
 | Variable | Default | Meaning |
 |---|---|---|
 | `POINTER_PORT` | `8790` | hub port (extension connects here) |
 | `POINTER_FOCUS_WINDOW` | `1` | raise the OS window for `tab_open` / `tab_focus` (other actions never steal focus) |
 | `POINTER_AGENT` | `agent` | name shown in status and the tab-title badge (`Claude · PAVE Inspect`) |
+
+## Acknowledgements
+
+Pointer is an independent implementation, written from scratch. Its shape — a Chrome extension that
+drives your own tab over `chrome.debugger`, with a pointer you can watch — owes a debt to
+[ofershap/real-browser-mcp](https://github.com/ofershap/real-browser-mcp). Worth a look if you want
+a different take on the same problem.
