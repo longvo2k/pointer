@@ -193,6 +193,19 @@
     const esc = (s) => String(s || "").replace(/[<>&]/g, "");
     ui.label.innerHTML = `<b>${esc(action)}</b>${target ? " · " + esc(target) : ""}`;
     ui.label.classList.add("on");
+
+    // Keep the tag on screen: flip it to the left of the pointer when it would
+    // run past the right edge, and lift it above the pointer near the bottom.
+    const pad = 8;
+    const w = ui.label.offsetWidth;
+    const h = ui.label.offsetHeight;
+    let left = ui.x + 24;
+    let top = ui.y + 13;
+    if (left + w > window.innerWidth - pad) left = Math.max(pad, ui.x - w - 24);
+    if (top + h > window.innerHeight - pad) top = Math.max(pad, ui.y - h - 13);
+    ui.label.style.marginLeft = left - ui.x + "px";
+    ui.label.style.marginTop = top - ui.y + "px";
+
     clearTimeout(say._t);
     say._t = setTimeout(() => ui.label && ui.label.classList.remove("on"), 1800);
   }
