@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Pointer — agent browser bridge",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Lets any MCP agent drive your real Chrome tab, with a visible pointer you can follow.",
   "minimum_chrome_version": "116",
   "permissions": ["tabs", "tabGroups", "scripting", "debugger", "storage", "alarms"],

@@ -18,9 +18,6 @@ let lastTabId = null;
 let lastFocusedTab = null;
 let agentName = "agent";
 let stopped = false;
-let lastFocusedAt = 0;
-let lastFocusedWindowId = null;
-let focusReady = Promise.resolve();
 const attached = new Set();
 const markedTabs = new Set();
 const agentGroups = new Map(); // windowId -> Chrome tab group id
@@ -33,7 +30,7 @@ const GROUP_TITLE_MAX = 24;
 
 // Toggle when hunting a slow command; logs go to the extension worker console.
 const TRACE = false;
-const BUILD = "0.2.1";
+const BUILD = "0.2.2";
 const traceStart = Date.now();
 self.__pointerBuild = BUILD;
 function trace(...args) {
@@ -65,15 +62,12 @@ function connect() {
     connected = true;
     reconnectDelay = 800;
     const instanceId = await getInstanceId();
-    await focusReady;
     send({
       event: "hello",
       name: "pointer-extension",
       version: chrome.runtime.getManifest().version,
       instanceId,
       build: self.__pointerBuild || null,
-      lastFocusedAt,
-      lastFocusedWindowId,
     });
     setBadge("on");
   });
@@ -120,61 +114,6 @@ function setBadge(state) {
   chrome.action.setBadgeText({ text: state === "on" ? "on" : "" }).catch(() => {});
   chrome.action.setBadgeBackgroundColor({ color: state === "on" ? "#2563eb" : "#9ca3af" }).catch(() => {});
 }
-
-// ---------------------------------------------------------- focus tracking ---
-// The hub uses the profile that was focused most recently to decide where a
-// new tab should open. Persist the timestamp locally so an evicted worker or an
-// extension reload does not forget which Chrome window the human used last.
-async function saveFocusState() {
-  try {
-    await chrome.storage.local.set({
-      pointerLastFocusedAt: lastFocusedAt,
-      pointerLastFocusedWindowId: lastFocusedWindowId,
-    });
-  } catch {}
-}
-
-async function rememberFocus(windowId) {
-  lastFocusedAt = Date.now();
-  if (windowId != null) lastFocusedWindowId = windowId;
-  await saveFocusState();
-}
-
-async function readFocusState({ update = false } = {}) {
-  let focusedWindow = null;
-  try {
-    const windows = await chrome.windows.getAll({ windowTypes: ["normal"] });
-    focusedWindow = windows.find((win) => win.focused) || null;
-  } catch {}
-  if (focusedWindow && update) await rememberFocus(focusedWindow.id);
-  return {
-    focused: Boolean(focusedWindow),
-    at: lastFocusedAt,
-    windowId: lastFocusedWindowId,
-  };
-}
-
-focusReady = (async () => {
-  try {
-    const stored = await chrome.storage.local.get([
-      "pointerLastFocusedAt",
-      "pointerLastFocusedWindowId",
-    ]);
-    lastFocusedAt = Number(stored.pointerLastFocusedAt) || 0;
-    if (Number.isInteger(stored.pointerLastFocusedWindowId)) {
-      lastFocusedWindowId = stored.pointerLastFocusedWindowId;
-    }
-  } catch {}
-  await readFocusState({ update: true });
-})().catch(() => {});
-
-chrome.windows.onFocusChanged.addListener((windowId) => {
-  if (windowId === chrome.windows.WINDOW_ID_NONE) return;
-  void focusReady.then(async () => {
-    await rememberFocus(windowId);
-    send({ event: "focus", at: lastFocusedAt, windowId });
-  });
-});
 
 // The service worker can be evicted; this keeps reconnecting while idle.
 chrome.alarms.create("pointer-keepalive", { periodInMinutes: 0.5 });
@@ -272,8 +211,6 @@ async function prepareTab(tab, { bringToFront = false, focusWindow = true } = {}
   if (focusWindow) {
     try {
       await chrome.windows.update(tab.windowId, { focused: true });
-      await rememberFocus(tab.windowId);
-      send({ event: "focus", at: lastFocusedAt, windowId: tab.windowId });
     } catch {}
   }
   lastFocusedTab = tab.id;
@@ -638,9 +575,6 @@ async function dispatch(method, params) {
     refreshGroupLabels().catch(() => {});
   }
   switch (method) {
-    case "ext.focus":
-      return readFocusState({ update: true });
-
     case "ext.status":
       return {
         connected,
@@ -665,27 +599,12 @@ async function dispatch(method, params) {
     }
 
     case "tabs.open": {
-      let windowId = null;
-      if (lastFocusedWindowId != null) {
-        const win = await chrome.windows.get(lastFocusedWindowId).catch(() => null);
-        if (win?.type === "normal") windowId = lastFocusedWindowId;
-      }
-      const tab = await chrome.tabs.create({
-        url: params.url || "about:blank",
-        active: true,
-        ...(windowId != null ? { windowId } : {}),
-      });
+      const tab = await chrome.tabs.create({ url: params.url || "about:blank", active: true });
       lastTabId = tab.id;
       lastFocusedTab = tab.id;
-      await rememberFocus(tab.windowId);
       try {
-        const win = await chrome.windows.get(tab.windowId).catch(() => null);
-        if (win?.state === "minimized") {
-          await chrome.windows.update(tab.windowId, { state: "normal" }).catch(() => {});
-        }
         await chrome.windows.update(tab.windowId, { focused: true });
       } catch {}
-      send({ event: "focus", at: lastFocusedAt, windowId: tab.windowId });
       await waitForLoad(tab.id);
       await markTab(tab.id);
       return { tabId: tab.id, url: tab.url || params.url };

@@ -196,30 +196,20 @@ async function main() {
         list
           .map((b) => {
             const age = b.connectedAt ? `${Math.round((now - b.connectedAt) / 1000)}s` : "?";
-            const lastFocus = b.lastFocusedAt
-              ? `${Math.max(0, Math.round((now - b.lastFocusedAt) / 1000))}s ago`
-              : "never";
-            const marker = b.active ? (b.pinned ? "→*" : "→ ") : "  ";
             return (
-              `${marker} ${b.id.slice(0, 8)}  ` +
+              `${b.active ? "→" : " "} ${b.id.slice(0, 8)}  ` +
               `build ${b.build || "unknown"}  ` +
               `instance ${b.instanceId ? b.instanceId.slice(0, 8) : "?"}  ` +
-              `last focus ${lastFocus}  ` +
               `connected ${age}`
             );
           })
-          .join("\n") +
-          (list.some((b) => b.pinned)
-            ? '\n\n* pinned; run "pointer use auto" to follow the active profile.'
-            : "")
+          .join("\n")
       );
     }
     case "use": {
-      if (!rest[0]) throw new Error("Usage: pointer use <browserId|auto>");
+      if (!rest[0]) throw new Error("Usage: pointer use <browserId>");
       const res = await rpc("ext.use", { id: rest[0] });
-      return print(
-        `active browser ${res.active.slice(0, 8)} ${res.pinned ? "(pinned)" : "(auto)"}`
-      );
+      return print(`active browser ${res.active.slice(0, 8)}`);
     }
     case "reload":
       return print(`reloading ${(await rpc("ext.reloadAll")).reloading} extension(s)`);
@@ -277,8 +267,8 @@ function usage() {
 
   pointer serve                 run the hub (extension connects to it)
   pointer status                connection + tab state
-  pointer browsers              list connected Chrome instances and last focus
-  pointer use <id|auto>         pin one Chrome instance, or follow the active profile
+  pointer browsers              list connected Chrome instances
+  pointer use <id>              route actions to one Chrome instance
   pointer reload                reload every connected extension from disk
   pointer tabs                  list tabs
   pointer open <url>            open and focus a tab

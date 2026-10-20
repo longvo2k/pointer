@@ -88,21 +88,16 @@ Then use `node bin/pointer.mjs …` in place of `pointer …` below.
 
 ### Multiple browsers and extension reloads
 
-If more than one Chrome profile has Pointer loaded, `tab_open` follows the profile you used last. It
-opens the new tab in that profile's last focused window and makes it active. Other actions stay in the
-current browser, so an agent that is already working is not switched mid-task.
-
-`pointer browsers` shows each connection and when it was last focused. Pin one when you want every
-action, including `tab_open`, to stay there:
+If more than one Chrome profile has Pointer loaded, the hub keeps the first one it saw and leaves the
+others connected but idle. `tab_open` and every other action stay in that browser. Switching windows
+or profiles does not move Pointer to a different browser. Check and choose explicitly:
 
 ```bash
 pointer browsers
 pointer use 3f9c1a2b
-pointer use auto
 ```
 
-Each line shows a short connection id, the build, the last focus time, and whether it is active.
-`pointer use auto` clears the pin and follows the active profile again.
+Each line shows a short connection id, the build, and whether it is active.
 
 When you edit the extension, Chrome may keep serving the old copy of an unpacked extension even after
 a restart (this is easy to spot: the toolbar works, but the change is not there). Click **Reload** on
@@ -163,9 +158,9 @@ pointer use 3f9c1a2b
 
 - Snapshot covers the top frame. It does not traverse open shadow roots or reach into iframes yet.
 - There is no `eval` tool. Arbitrary JS in a logged-in tab turns a bug into an incident.
-- One browser is active at a time. `tab_open` follows the Chrome profile you used last; `pointer use
-  <id>` pins a browser until `pointer use auto`. Other actions never switch browsers mid-task.
-  (Multiple agents sharing tabs is still the next step.)
+- One browser is active at a time. If several Chrome profiles run the extension, the hub keeps the
+  first one active instead of switching silently; `pointer browsers` lists them and `pointer use <id>`
+  chooses another. (Multiple agents sharing tabs is still the next step.)
 
 ## Skill for agents
 
