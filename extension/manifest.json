@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Pointer — agent browser bridge",
+  "name": "Pointer",
   "version": "0.2.16",
   "description": "Lets any MCP agent drive your real Chrome tab, with a visible pointer you can follow.",
   "icons": {
