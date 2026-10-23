@@ -1,0 +1,39 @@
+name: Publish to npm
+
+# Runs when a version tag (v1.2.3) is pushed. The package is built here, in public,
+# and npm records that link (provenance), so anyone can check what it came from.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write # lets npm sign the provenance statement
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: npm
+      - name: Tag matches package.json and the extension
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(node -p "require('./package.json').version")"
+          ext="$(node -p "require('./extension/manifest.json').version")"
+          if [ "$tag" != "$pkg" ] || [ "$tag" != "$ext" ]; then
+            echo "Tag $tag, package.json $pkg, manifest $ext must all match."; exit 1
+          fi
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+      - run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
