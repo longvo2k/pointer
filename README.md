@@ -71,10 +71,22 @@ less install.sh
 bash install.sh
 ```
 
+Or install from npm, if you already use Node 18 or newer:
+
+```bash
+npm install -g @longvo2k/pointer
+pointer setup
+```
+
+Each npm release is built by this repo's [publish workflow](.github/workflows/release.yml) and
+carries a [provenance](https://docs.npmjs.com/generating-provenance-statements) record that links
+it to the exact commit. `npm install -g @longvo2k/pointer` again updates it. Then reload Pointer at
+`chrome://extensions`.
+
 Then load the extension once (Chrome does not let a script install an unpacked extension):
 
 1. `chrome://extensions` → turn on **Developer mode** → **Load unpacked**
-2. choose `~/.pointer/extension`
+2. choose `~/.pointer/extension` (with npm, the folder `pointer setup` prints)
 
 The toolbar badge reads `on` once it connects. Check it:
 
@@ -93,6 +105,7 @@ your real paths.
 1. `chrome://extensions` → Pointer → **Remove**
 2. `pkill -f "pointer.mjs serve"` to stop the hub
 3. `rm -rf ~/.pointer ~/.local/bin/pointer ~/.local/bin/pointer-mcp`
+   (or `npm uninstall -g @longvo2k/pointer` if you installed from npm)
 4. Remove the `# Added by Pointer installer` lines from your shell file, if you let it add them.
 5. Remove `pointer` from your agent's MCP config (`claude mcp remove pointer` for Claude Code).
 
@@ -141,6 +154,9 @@ OpenCode 2.x nests servers under `mcp.servers`, or run
   }
 }
 ```
+
+Installed from npm? Use `pointer-mcp` as the command instead, for example
+`claude mcp add pointer -- pointer-mcp`. `pointer setup` prints the config with your real paths.
 
 The MCP server starts the hub when it needs it.
 

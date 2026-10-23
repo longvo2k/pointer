@@ -1,13 +1,42 @@
 {
-  "name": "pointer",
+  "name": "@longvo2k/pointer",
   "version": "0.2.14",
-  "private": true,
   "type": "module",
   "description": "Drive a real Chrome tab from any MCP agent, with a visible pointer the human can follow.",
+  "keywords": [
+    "mcp",
+    "chrome",
+    "chrome-extension",
+    "browser-automation",
+    "ai-agent",
+    "claude-code",
+    "cursor",
+    "opencode"
+  ],
+  "homepage": "https://github.com/longvo2k/pointer#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/longvo2k/pointer.git"
+  },
+  "bugs": {
+    "url": "https://github.com/longvo2k/pointer/issues"
+  },
+  "author": "Vo Van Long",
   "license": "MIT",
   "bin": {
     "pointer": "./bin/pointer.mjs",
     "pointer-mcp": "./bin/mcp.mjs"
+  },
+  "files": [
+    "bin/",
+    "lib/",
+    "extension/",
+    "skills/",
+    "SECURITY.md",
+    "PRIVACY.md"
+  ],
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "serve": "node bin/pointer.mjs serve",
