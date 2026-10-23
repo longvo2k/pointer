@@ -24,8 +24,8 @@
   "author": "Vo Van Long",
   "license": "MIT",
   "bin": {
-    "pointer": "./bin/pointer.mjs",
-    "pointer-mcp": "./bin/mcp.mjs"
+    "pointer": "bin/pointer.mjs",
+    "pointer-mcp": "bin/mcp.mjs"
   },
   "files": [
     "bin/",
