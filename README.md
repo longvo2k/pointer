@@ -1,5 +1,10 @@
 # Pointer
 
+[![CI](https://github.com/longvo2k/pointer/actions/workflows/ci.yml/badge.svg)](https://github.com/longvo2k/pointer/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![No telemetry](https://img.shields.io/badge/telemetry-none-brightgreen.svg)
+![Runtime deps: 1](https://img.shields.io/badge/runtime%20deps-1-brightgreen.svg)
+
 Let any agent drive your real Chrome tab, with a pointer you can watch.
 
 ![An agent drives a real Chrome tab from the CLI: it checks the connection, opens a page, picks the Scale plan, types a work email, creates the workspace, and copies the invite link, with Pointer's cursor and action labels visible](https://github.com/user-attachments/assets/d8feced1-c207-49d5-ad37-394b98d47b14)
@@ -50,9 +55,19 @@ give me a 3-bullet summary."*
 curl -fsSL https://raw.githubusercontent.com/longvo2k/pointer/main/install.sh | bash
 ```
 
-This clones into `~/.pointer`, installs dependencies, links `pointer` and `pointer-mcp` into
-`~/.local/bin`, and opens `chrome://extensions` with the extension folder revealed. Run it again to
-update. Set `POINTER_DIR` to install elsewhere, or `POINTER_NO_OPEN=1` to skip opening Chrome.
+This installs the latest release into `~/.pointer`, installs its one dependency, links `pointer`
+and `pointer-mcp` into `~/.local/bin`, and opens `chrome://extensions` with the extension folder
+revealed. It asks before adding `~/.local/bin` to your shell's `PATH`. Run it again to update. Set
+`POINTER_DIR` to install elsewhere, `POINTER_REF` to pick a version, or `POINTER_NO_OPEN=1` to skip
+opening Chrome.
+
+Prefer to read it first? The installer is about 100 lines:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/longvo2k/pointer/main/install.sh -o install.sh
+less install.sh
+bash install.sh
+```
 
 Then load the extension once (Chrome does not let a script install an unpacked extension):
 
@@ -69,6 +84,17 @@ pointer snap
 
 `pointer setup` reopens the extension page, copies the folder path, and prints an MCP config with
 your real paths.
+
+<details>
+<summary>Uninstall</summary>
+
+1. `chrome://extensions` → Pointer → **Remove**
+2. `pkill -f "pointer.mjs serve"` to stop the hub
+3. `rm -rf ~/.pointer ~/.local/bin/pointer ~/.local/bin/pointer-mcp`
+4. Remove the `# Added by Pointer installer` lines from your shell file, if you let it add them.
+5. Remove `pointer` from your agent's MCP config (`claude mcp remove pointer` for Claude Code).
+
+</details>
 
 <details>
 <summary>From a checkout (development)</summary>
@@ -250,13 +276,33 @@ The code is split along the trust boundary:
 When adding behavior, keep that boundary: browser mechanics go in the extension, new tools and their
 formatting in `lib/tools.mjs`, and agent guidance in the skill. The hub stays a router.
 
-## Security and limits
+## Security and privacy
 
-- There is no `eval` tool. Arbitrary JavaScript in a logged-in tab turns a bug into an incident.
-- The hub listens on 127.0.0.1 only and refuses web pages: `/ext` accepts only a
-  `chrome-extension://` origin, and `/rpc` requires `application/json`, a localhost `Host`, and no
-  `Origin` header. Other programs running as your user can still reach it, the same as they can reach
-  your browser profile.
+Pointer drives your logged-in browser, so it should be easy to check. In short:
+
+- **No outside servers.** The code only talks to `127.0.0.1`. No accounts, analytics, or telemetry.
+- **No code execution tool.** There is no `eval` and no tool that runs JavaScript you pass in.
+- **Web pages cannot reach it.** The hub refuses cross-site requests, DNS rebinding, and pages
+  pretending to be the extension. Tests cover each rule.
+- **One runtime dependency** (`ws`), no install scripts, and plain, unminified source you can read.
+- **Your agent sees what it reads.** Page text and screenshots go to the agent you connected, and
+  from there to its AI model provider. See [PRIVACY.md](PRIVACY.md).
+
+Check it yourself from a checkout:
+
+```bash
+grep -rnE "https?://[A-Za-z0-9]" bin lib extension | grep -v 127.0.0.1 | grep -v w3.org/2000/svg  # outside URLs: none
+grep -rnE "\beval\(|new Function" bin lib extension                  # dynamic code: none
+npm ls --omit=dev --all                                               # dependencies: ws only
+```
+
+(`w3.org/2000/svg` is the SVG namespace for the cursor icon, not a request.) CI runs the same checks
+plus the test suite on every push. [SECURITY.md](SECURITY.md) explains each
+Chrome permission, what Pointer does and does not protect against, and how to report a problem
+privately.
+
+### Limits
+
 - Snapshots cover the top frame. They do not reach into iframes or open shadow roots yet.
 - One browser is active at a time, and one agent at a time. Several agents sharing tabs is the next
   step.
@@ -286,6 +332,10 @@ ln -s "$PWD/skills/pointer" ~/.claude/skills/pointer
 Start a new session so the skill shows up. The bundled `skills/pointer/scripts/pointer` wrapper
 finds the checkout from its own location, so the skill works linked, copied into a project, or run
 from the repo.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Run `npm test` before sending a change.
 
 ## License
 
