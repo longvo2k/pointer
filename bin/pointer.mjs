@@ -201,7 +201,8 @@ async function main() {
               `${b.active ? "→" : " "} ${b.id.slice(0, 8)}  ` +
               `build ${b.build || "unknown"}  ` +
               `instance ${b.instanceId ? b.instanceId.slice(0, 8) : "?"}  ` +
-              `connected ${age}`
+              `connected ${age}` +
+              (b.stale ? `  ⚠ stale: files are v${b.version}, Chrome runs ${b.build}. Remove + Load unpacked.` : "")
             );
           })
           .join("\n")
