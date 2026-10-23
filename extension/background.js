@@ -31,7 +31,7 @@ const GROUP_TITLE_MAX = 24;
 
 // Toggle when hunting a slow command; logs go to the extension worker console.
 const TRACE = false;
-const BUILD = "0.2.13";
+const BUILD = "0.2.14";
 const traceStart = Date.now();
 self.__pointerBuild = BUILD;
 function trace(...args) {
@@ -109,7 +109,7 @@ function connect() {
       sendOn({ id: msg.id, ok: true, result });
     } catch (err) {
       trace("failed", msg.method, `${Date.now() - started}ms`, err?.message || String(err));
-      sendOn({ id: msg.id, ok: false, error: err?.message || String(err) });
+      sendOn({ id: msg.id, ok: false, error: err instanceof Error ? err.message : typeof err === "string" ? err : "Command failed" });
     }
   });
 
@@ -720,6 +720,12 @@ async function cdp(tabId, method, params) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/** A wait the caller asked for, kept between 0 and `max` ms. */
+function clampMs(value, fallback, max) {
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.min(Math.max(n, 0), max) : fallback;
+}
+
 /**
  * A hidden tab still accepts CDP input, but Chrome can throttle each input
  * event until the renderer wakes up (observed at ~5s per move). Focus
@@ -1087,7 +1093,7 @@ async function dispatch(method, params) {
         trace("act input done");
 
         // Give the page a beat to react so the report sees the result.
-        await sleep(params.settleMs ?? 240);
+        await sleep(clampMs(params.settleMs, 240, 5000));
         const changes = await collectChanges(tab.id, docId);
         const after = await chrome.tabs.get(tab.id);
         trace("act done");

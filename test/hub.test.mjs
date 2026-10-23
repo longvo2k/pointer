@@ -60,6 +60,18 @@ test("rpc accepts JSON from local tools", async () => {
   assert.equal(JSON.parse(res.body).ok, true);
 });
 
+test("a failed call answers with a plain message, no stack trace", async () => {
+  const res = await request("/rpc", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ method: "page.snapshot" }), // no browser connected yet
+  });
+  const body = JSON.parse(res.body);
+  assert.equal(body.ok, false);
+  assert.match(body.error, /not connected/);
+  assert.doesNotMatch(body.error, /\n\s+at |hub\.mjs/);
+});
+
 test("rpc refuses a text/plain POST, the kind any web page can send", async () => {
   const res = await request("/rpc", {
     method: "POST",
