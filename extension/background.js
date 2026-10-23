@@ -21,6 +21,7 @@ let stopped = false;
 const attached = new Set();
 const markedTabs = new Set();
 const openedTabs = new Set(); // tabs tab_open created; tab_close may close these
+const viewports = new Map(); // tabId -> emulated screen size, reapplied if the debugger reattaches
 const agentGroups = new Map(); // windowId -> Chrome tab group id
 let modifier = "Meta"; // set from platform info
 
@@ -491,6 +492,27 @@ async function attach(tabId) {
   }
   // Page events tell us when alert()/confirm()/prompt() opens.
   await chrome.debugger.sendCommand({ tabId }, "Page.enable").catch(() => {});
+  // Emulation ends with the debugger session; restore the size the agent chose.
+  const size = viewports.get(tabId);
+  if (size) await applyViewport(tabId, size).catch(() => {});
+}
+
+/** Emulate a screen size in one tab, or clear it. Never touches the window. */
+async function applyViewport(tabId, size) {
+  const send = (method, params) => chrome.debugger.sendCommand({ tabId }, method, params);
+  if (!size) {
+    await send("Emulation.setTouchEmulationEnabled", { enabled: false });
+    await send("Emulation.clearDeviceMetricsOverride");
+    return;
+  }
+  // Touch first, so resize handlers that check for touch see the new value.
+  await send("Emulation.setTouchEmulationEnabled", size.mobile ? { enabled: true, maxTouchPoints: 5 } : { enabled: false });
+  await send("Emulation.setDeviceMetricsOverride", {
+    width: size.width,
+    height: size.height,
+    deviceScaleFactor: size.deviceScaleFactor,
+    mobile: size.mobile,
+  });
 }
 
 chrome.debugger.onDetach.addListener(({ tabId }) => forgetTab(tabId, { keepMarks: true }));
@@ -502,6 +524,7 @@ function forgetTab(tabId, { keepMarks = false } = {}) {
   dialogs.delete(tabId);
   captures.delete(tabId);
   if (!keepMarks) markedTabs.delete(tabId);
+  if (!keepMarks) viewports.delete(tabId);
 }
 
 /**
@@ -1328,7 +1351,8 @@ async function dispatch(method, params) {
       // or app, render the agent tab with CDP instead.
       const fresh = await chrome.tabs.get(tab.id);
       const win = await chrome.windows.get(fresh.windowId).catch(() => null);
-      const visible = fresh.active && win?.focused !== false && win?.state !== "minimized";
+      // An emulated screen size only shows up in a CDP capture.
+      const visible = fresh.active && win?.focused !== false && win?.state !== "minimized" && !viewports.has(fresh.id);
       if (visible) {
         try {
           dataUrl = await withTimeout(
@@ -1353,6 +1377,43 @@ async function dispatch(method, params) {
         trace("shot via cdp");
       }
       return { dataUrl, tabId: tab.id, url: tab.url };
+    }
+
+    case "page.viewport": {
+      const tab = await resolveTab(params);
+      lastTabId = tab.id;
+      assertNoDialog(tab.id);
+      await markTab(tab.id);
+      const size = params.reset
+        ? null
+        : {
+            width: Number(params.width),
+            height: Number(params.height),
+            deviceScaleFactor: Number(params.deviceScaleFactor) || 1,
+            mobile: Boolean(params.mobile),
+          };
+      try {
+        await attach(tab.id);
+        // A background tab holds resize events until it next renders; keep it
+        // awake while the new size settles so script-driven layouts update too.
+        await withBackgroundInput(tab, async () => {
+          await applyViewport(tab.id, size);
+          await sleep(300);
+        });
+      } catch (err) {
+        if (debuggerBlocked(err)) {
+          throw new Error(
+            "Chrome blocks screen-size emulation on this page because another extension's frame (often a password " +
+              "manager popup) is in it. Ask the human to close that popup, then try again."
+          );
+        }
+        throw err;
+      }
+      if (size) viewports.set(tab.id, size);
+      else viewports.delete(tab.id);
+      const snap = await page(tab.id, "pointer:snapshot", { scope: "viewport" });
+      const fresh = await chrome.tabs.get(tab.id);
+      return { tabId: tab.id, url: fresh.url, snapshot: snap.text };
     }
 
     case "page.hidePointer": {

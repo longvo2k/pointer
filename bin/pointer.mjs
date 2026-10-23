@@ -15,6 +15,7 @@
  *   pointer scroll [up|down] [px]
  *   pointer text             read the page as text
  *   pointer shot [path]      screenshot (saves PNG, prints path)
+ *   pointer viewport mobile  emulate a screen size (tablet, desktop, W H, reset)
  *   pointer stop             hide the pointer and stop
  *   pointer setup            show install paths and open chrome://extensions
  *
@@ -275,6 +276,15 @@ async function main() {
       writeFileSync(path, Buffer.from(res.image.data, "base64"));
       return print(`saved ${path}`);
     }
+    case "viewport": {
+      const words = rest.filter((a) => !a.startsWith("--"));
+      const mobile = rest.includes("--mobile") ? true : rest.includes("--no-mobile") ? false : undefined;
+      if (!words.length) throw new Error("Usage: pointer viewport mobile|tablet|desktop|reset | <width> <height> [--mobile]");
+      const args = /^\d+$/.test(words[0])
+        ? { width: Number(words[0]), height: Number(words[1]) }
+        : { preset: words[0] };
+      return print((await tool("viewport", { ...args, ...(mobile != null ? { mobile } : {}) })).text);
+    }
     case "dialog": {
       const action = rest[0];
       if (action !== "accept" && action !== "dismiss") throw new Error("Usage: pointer dialog accept|dismiss [prompt text]");
@@ -341,6 +351,7 @@ function usage() {
   pointer scroll [up|down] [px]
   pointer text                  page as readable text
   pointer shot [path]           screenshot (pointer included)
+  pointer viewport <preset|W H> emulate mobile, tablet, desktop, or W H [--mobile]; reset when done
   pointer dialog accept|dismiss [text]  answer an alert/confirm/prompt
   pointer upload [ref] <file...>       attach files to a file input
   pointer console [errors|warnings|all] [--reload]

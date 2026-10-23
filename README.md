@@ -196,6 +196,7 @@ show up too, so the agent sees "Saved" or "Pick a plan to continue" without anot
 |---|---|
 | Tabs | `browser_status`, `tabs_list`, `tab_open`, `tab_select`, `tab_close`, `tab_focus` |
 | Read | `snapshot`, `find`, `read_text`, `screenshot`, `wait_for` |
+| Screen size | `viewport` |
 | Act | `click`, `fill`, `press`, `scroll`, `upload`, `dialog` |
 | Debug | `console`, `network` |
 | Stop | `stop` |
@@ -210,6 +211,9 @@ A few that need explaining:
   says so instead of hanging.
 - `upload` attaches local files: to a file input, a styled button over a hidden one, or a button that
   opens the file picker itself (the picker is intercepted, so no system dialog appears).
+- `viewport mobile` (or `tablet`, `desktop`, a width and height) emulates that screen in the agent's
+  tab, with touch for phones and tablets, so the agent can check a responsive layout and take
+  screenshots at each size. Your window and tabs keep their size. `viewport reset` undoes it.
 - `console` and `network` read the tab's errors and requests. Capture starts on the first call
   (`reload: true` captures a page load), because turning it on makes the debugger easier for anti-bot
   scripts to notice.
@@ -227,6 +231,7 @@ pointer upload e4 ~/resume.pdf
 pointer console errors --reload
 pointer network api --failed
 pointer shot out.png
+pointer viewport mobile                # also tablet, desktop, 390 844, reset
 pointer close --all                   # close the agent's tabs
 ```
 
