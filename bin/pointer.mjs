@@ -7,7 +7,8 @@
  *   pointer open <url>       open a background tab (--focus to bring it forward)
  *   pointer tabs             list tabs
  *   pointer focus <tabId>
- *   pointer snap             interactive elements with refs
+ *   pointer snap [--all] [--hrefs]  on-screen elements with refs
+ *   pointer find <words>     search the whole page for elements
  *   pointer click <ref|css>
  *   pointer fill <ref|css> <text...>
  *   pointer press <key>
@@ -225,7 +226,12 @@ async function main() {
       return print((await tool("tab_focus", { tabId: Number(rest[0]) })).text);
     case "snap":
     case "snapshot":
-      return print((await tool("snapshot")).text);
+      return print(
+        (await tool("snapshot", { scope: rest.includes("--all") ? "all" : "viewport", hrefs: rest.includes("--hrefs") })).text
+      );
+    case "find":
+      if (!rest.length) throw new Error("Usage: pointer find <words>");
+      return print((await tool("find", { query: rest.join(" ") })).text);
     case "click": {
       if (!rest[0]) throw new Error("Usage: pointer click <ref|selector>");
       const target = /^@?e\d+$/.test(rest[0]) ? { ref: rest[0] } : { selector: rest[0] };
@@ -275,7 +281,8 @@ function usage() {
   pointer tabs                  list tabs
   pointer open <url> [--focus]  open a background tab (--focus raises it)
   pointer focus <tabId>         bring a tab forward
-  pointer snap                  interactive elements with refs
+  pointer snap [--all] [--hrefs] on-screen elements with refs
+  pointer find <words>          search the whole page for elements
   pointer click <ref|selector>  move the pointer, then click
   pointer fill <ref|selector> <text>
   pointer press <key>

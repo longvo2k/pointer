@@ -132,23 +132,27 @@ Run `pointer setup` to print this snippet with your real path, or with Claude Co
 claude mcp add pointer -- node ~/.pointer/bin/mcp.mjs
 ```
 
-Tools: `browser_status`, `tabs_list`, `tab_open`, `tab_focus`, `snapshot`, `click`, `fill`, `press`,
-`scroll`, `read_text`, `wait_for`, `screenshot`, `stop`.
+Tools: `browser_status`, `tabs_list`, `tab_open`, `tab_focus`, `snapshot`, `find`, `click`, `fill`,
+`press`, `scroll`, `read_text`, `wait_for`, `screenshot`, `stop`.
 
 The usual loop is short:
 
 ```
-snapshot  →  click e12  →  snapshot
+snapshot  →  click e12  (reports what changed)  →  fill e40 …
 ```
 
-`snapshot` returns compact text with refs (`- button "Try PAVE" [ref=e12]`) instead of a DOM dump.
-Refs reset on navigation, so re-snapshot after the page changes.
+`snapshot` returns compact text for what is on screen (`- button "Try PAVE" [ref=e12]`) and counts
+the rest; `find "sign up"` searches the whole page. Refs stay valid until the page navigates, and
+`click`, `fill`, `press`, and `scroll` return only what changed on screen, so the agent rarely needs
+another snapshot. On GitHub, Wikipedia, and Amazon this cuts a snapshot from ~9,100 characters to
+1,700–4,000, and a typical action report is a few hundred.
 
 ### CLI (shell agents)
 
 ```bash
 pointer open https://paveinspect.com/
 pointer snap
+pointer find "sign up"
 pointer click e14
 pointer fill e9 "hello" --json
 pointer shot out.png

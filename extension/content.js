@@ -303,97 +303,238 @@
     return clean(el.innerText || el.value || el.getAttribute?.("title") || el.getAttribute?.("alt"));
   }
 
+  const ACTIONABLE = new Set(["button", "link", "checkbox", "radio", "textbox", "searchbox", "combobox",
+    "switch", "tab", "menuitem", "slider", "spinbutton", "option", "disclosure"]);
+
   function isInteractive(el, role) {
-    if (["button", "link", "checkbox", "radio", "textbox", "searchbox", "combobox",
-         "switch", "tab", "menuitem", "slider", "spinbutton", "option", "disclosure"].includes(role)) return true;
+    if (ACTIONABLE.has(role)) return true;
     if (el.hasAttribute && (el.hasAttribute("onclick") || el.isContentEditable)) return true;
     if (el.tagName === "LABEL") return true;
     const c = getComputedStyle(el).cursor;
     return c === "pointer" && !!(nameOf(el) || "").length;
   }
 
-  const refs = new Map();
+  // Refs are stable for the life of the document: an element keeps its ref
+  // across snapshots, so the agent can act on a ref it saw earlier and the
+  // change report can tell "same element, new state" from "new element".
+  const DOC_ID = Math.random().toString(36).slice(2);
+  const refOf = new WeakMap(); // element -> ref
+  const refs = new Map(); // ref -> element
+  let nextRef = 0;
 
-  function clearRefs() {
-    document.querySelectorAll("[data-pointer-ref]").forEach((el) => {
-      el.removeAttribute("data-pointer-ref");
-    });
-    refs.clear();
+  function refFor(el) {
+    let ref = refOf.get(el);
+    if (!ref) {
+      ref = "e" + ++nextRef;
+      refOf.set(el, ref);
+      refs.set(ref, el);
+      el.setAttribute("data-pointer-ref", ref);
+    }
+    return ref;
   }
 
-  function snapshot({ maxChars = 9000 } = {}) {
-    initOverlay();
-    clearRefs();
+  function pruneRefs() {
+    for (const [ref, el] of refs) if (!el.isConnected) refs.delete(ref);
+  }
 
-    const seen = new Set();
-    const lines = [];
-    let n = 0;
-    let scanned = 0;
+  const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE", "SVG"]);
+  const CONTROL =
+    "a[href],button,input,select,textarea,summary,label,[role=button],[role=link],[role=tab]," +
+    "[role=menuitem],[role=option],[role=checkbox],[role=radio],[role=switch],[role=combobox]";
+
+  /** { role, name } for an element worth listing, or null. */
+  function describe(el) {
+    // tagName is lowercase for SVG elements, so compare in upper case.
+    const tag = el.tagName.toUpperCase();
+    if (SKIP_TAGS.has(tag)) return null;
+    if (!isVisible(el)) return null;
 
     // Every element with pointer affordance, plus the semantic candidates.
     // A plain div-based tab has no role and no tag we can key on, but the page
     // still says cursor:pointer, which is the best signal available.
+    let role = roleOf(el);
+    if (!role) {
+      if (getComputedStyle(el).cursor !== "pointer") return null;
+      // Skip wrappers whose real control is listed separately.
+      if (el.querySelector("input,select,textarea,button,a[href],[role]")) return null;
+      // Skip pieces of a control that is already listed (the spans inside a
+      // link), and elements that only inherited the cursor from their parent:
+      // the outermost pointer element stands for the whole thing.
+      const parent = el.parentElement;
+      if (parent?.closest(CONTROL)) return null;
+      if (parent && getComputedStyle(parent).cursor === "pointer") return null;
+      if (tag === "LABEL") return null;
+      if (!nameOf(el)) return null;
+      role = "clickable";
+    }
+    if (!isInteractive(el, role)) return null;
+    // A heading or image inside a link only repeats the link's line.
+    if (!ACTIONABLE.has(role) && el.parentElement?.closest(CONTROL)) return null;
+    return { role, name: nameOf(el).slice(0, 120) };
+  }
+
+  /** Where an element sits relative to the viewport. */
+  function placeOf(el) {
+    const r = el.getBoundingClientRect();
+    if (r.bottom <= 0) return "above";
+    if (r.top >= window.innerHeight) return "below";
+    if (r.right <= 0 || r.left >= window.innerWidth) return "aside";
+    return "in";
+  }
+
+  function lineFor(el, { role, name }, ref, hrefs) {
+    let line = `- ${role}`;
+    if (name) line += ` "${name}"`;
+    line += ` [ref=${ref}]`;
+
+    // Link targets are ~45% of a snapshot and rarely needed to act; opt in.
+    if (hrefs && el.tagName === "A" && el.href) {
+      try {
+        const u = new URL(el.href);
+        const where = u.origin === location.origin ? "" : u.host;
+        line += ` href="${(where + u.pathname + u.search).slice(0, 80) || "/"}"`;
+      } catch {}
+    }
+    if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") {
+      const v = el.type === "password" ? "" : (el.value || "").slice(0, 60);
+      if (v) line += ` value="${v.replace(/"/g, "'")}"`;
+      if (el.placeholder && !name) line += ` placeholder="${el.placeholder.slice(0, 60)}"`;
+    }
+    if (el.type === "checkbox" || el.type === "radio") line += el.checked ? " checked" : "";
+    if (el.disabled || el.getAttribute("aria-disabled") === "true") line += " disabled";
+    if (el.getAttribute("aria-expanded") === "true") line += " expanded";
+    return line;
+  }
+
+  /**
+   * Walk the page once. With scope "viewport", only on-screen elements get a
+   * line; the rest are counted so the agent knows there is more.
+   */
+  function collect({ scope = "viewport", hrefs = false } = {}) {
+    pruneRefs();
+    const items = [];
+    let above = 0;
+    let below = 0;
+    let scanned = 0;
     for (const el of document.querySelectorAll("body *")) {
       if (++scanned > 12000) break;
-      if (seen.has(el)) continue;
-      // tagName is lowercase for SVG elements, so compare in upper case.
-      const tag = el.tagName.toUpperCase();
-      if (tag === "SCRIPT" || tag === "STYLE" || tag === "NOSCRIPT" || tag === "TEMPLATE" || tag === "SVG") continue;
-      if (!isVisible(el)) continue;
-
-      let role = roleOf(el);
-      if (!role) {
-        const style = getComputedStyle(el);
-        if (style.cursor !== "pointer") continue;
-        // Skip wrappers whose real control is listed separately.
-        if (el.querySelector("input,select,textarea,button,a[href],[role]")) continue;
-        if (tag === "LABEL") continue;
-        if (!nameOf(el)) continue;
-        role = "clickable";
+      const d = describe(el);
+      if (!d) continue;
+      const where = placeOf(el);
+      if (scope === "viewport" && where !== "in") {
+        if (where === "above") above++;
+        else below++;
+        continue;
       }
-      if (!isInteractive(el, role)) continue;
+      const ref = refFor(el);
+      items.push({ el, ref, where, role: d.role, name: d.name, line: lineFor(el, d, ref, hrefs) });
+    }
+    return { items, above, below };
+  }
 
-      const name = nameOf(el).slice(0, 120);
-      const n2 = ++n;
-      const ref = "e" + n2;
-      el.setAttribute("data-pointer-ref", ref);
-      refs.set(ref, el);
-      if (role === "heading") continue; // context only, not actionable
-
-      let line = `- ${role}`;
-      if (name) line += ` "${name}"`;
-      line += ` [ref=${ref}]`;
-
-      if (el.tagName === "A" && el.href) {
-        try {
-          const u = new URL(el.href);
-          line += ` href="${(u.pathname + u.search).slice(0, 80) || "/"}"`;
-        } catch {}
-      }
-      if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") {
-        const v = el.type === "password" ? "" : (el.value || "").slice(0, 60);
-        if (v) line += ` value="${v.replace(/"/g, "'")}"`;
-        if (el.placeholder && !name) line += ` placeholder="${el.placeholder.slice(0, 60)}"`;
-      }
-      if (el.type === "checkbox" || el.type === "radio") line += el.checked ? " checked" : "";
-      if (el.disabled || el.getAttribute("aria-disabled") === "true") line += " disabled";
-      if (el.getAttribute("aria-expanded") === "true") line += " expanded";
-
-      lines.push(line);
-      if (lines.join("\n").length > maxChars) {
-        lines.push(`... truncated at ${n} elements`);
+  function joinCapped(lines, maxChars, more) {
+    const out = [];
+    let size = 0;
+    for (let i = 0; i < lines.length; i++) {
+      size += lines[i].length + 1;
+      if (size > maxChars) {
+        out.push(`... ${lines.length - i} more not shown${more ? ` (${more})` : ""}`);
         break;
       }
+      out.push(lines[i]);
     }
+    return out.join("\n");
+  }
 
+  function snapshot({ scope = "viewport", hrefs = false, maxChars = 9000 } = {}) {
+    initOverlay();
+    const { items, above, below } = collect({ scope, hrefs });
     const head = [`url: ${location.href}`, `title: ${document.title}`];
-    const body = lines.join("\n");
-    return `${head.join("\n")}\n${body || "(no interactive elements found)"}`;
+    if (scope === "viewport" && (above || below)) {
+      const range = document.documentElement.scrollHeight - window.innerHeight;
+      const pct = range > 0 ? Math.round((window.scrollY / range) * 100) : 0;
+      head.push(
+        `view: ${pct}% down · ${above} elements above, ${below} below ` +
+          `(scroll, find, or snapshot scope "all")`
+      );
+    }
+    const body = joinCapped(items.map((i) => i.line), maxChars, `use find or scope "all"`);
+    return `${head.join("\n")}\n${body || "(no interactive elements in view)"}`;
+  }
+
+  /** Search every interactive element on the page, on screen or not. */
+  function findElements({ query = "", limit = 8 } = {}) {
+    const words = String(query).toLowerCase().split(/\s+/).filter(Boolean);
+    if (!words.length) throw new Error("find needs a query, e.g. \"sign up button\"");
+    const q = words.join(" ");
+    const { items } = collect({ scope: "all", hrefs: true });
+    const scored = [];
+    for (const it of items) {
+      const name = it.name.toLowerCase();
+      const hay = `${it.role} ${name} ${it.el.placeholder || ""} ${it.el.getAttribute("href") || ""}`.toLowerCase();
+      const hits = words.filter((w) => hay.includes(w)).length;
+      if (!hits) continue;
+      const score = hits * 4 + (name === q ? 3 : 0) + (name.startsWith(q) ? 1 : 0) + (it.where === "in" ? 1 : 0);
+      scored.push({ it, score });
+    }
+    scored.sort((a, b) => b.score - a.score);
+    const top = scored.slice(0, Math.max(1, Math.min(limit, 30)));
+    if (!top.length) return `no element matches "${query}"`;
+    const lines = top.map(({ it }) => it.line + (it.where === "in" ? "" : ` (${it.where})`));
+    if (scored.length > top.length) lines.push(`... ${scored.length - top.length} weaker matches`);
+    return lines.join("\n");
+  }
+
+  // ---------------------------------------------------------- change report ---
+  // Before an action the worker takes a baseline of what is on screen; after
+  // it, the agent gets only the difference instead of a whole new snapshot.
+  let baseline = null;
+
+  function viewLines() {
+    const map = new Map();
+    for (const it of collect({ scope: "viewport" }).items) map.set(it.ref, it.line);
+    return map;
+  }
+
+  const CHANGE_LIMIT = 30;
+
+  function changes({ docId, addedOnly = false, limit = CHANGE_LIMIT } = {}) {
+    if (docId && docId !== DOC_ID) {
+      // A new document: there is nothing to diff against.
+      baseline = { lines: viewLines() };
+      return { navigated: true, snapshot: snapshot({ scope: "viewport" }) };
+    }
+    const now = viewLines();
+    const before = baseline?.lines || new Map();
+    const added = [];
+    const removed = [];
+    const changed = [];
+    for (const [ref, line] of now) {
+      if (!before.has(ref)) added.push(line);
+      else if (before.get(ref) !== line) changed.push(line);
+    }
+    if (!addedOnly) for (const [ref, line] of before) if (!now.has(ref)) removed.push(line);
+    baseline = { lines: now };
+
+    const total = added.length + removed.length + changed.length;
+    // A big change (new route, modal over everything) reads better as a view.
+    if (!addedOnly && total > limit) {
+      return { replaced: true, url: location.href, snapshot: snapshot({ scope: "viewport" }) };
+    }
+    return {
+      url: location.href,
+      title: document.title,
+      added: added.slice(0, limit * 2),
+      removed,
+      changed,
+      more: Math.max(0, added.length - limit * 2),
+    };
   }
 
   function findByRef(ref) {
     if (!ref) return null;
-    if (refs.has(ref)) return refs.get(ref);
+    const el = refs.get(ref);
+    if (el?.isConnected) return el;
     return document.querySelector(`[data-pointer-ref="${CSS.escape(String(ref))}"]`);
   }
 
@@ -431,7 +572,7 @@
     const r = el.getBoundingClientRect();
     const pad = 80;
     if (r.top < pad || r.bottom > window.innerHeight - pad) {
-      el.scrollIntoView({ block: "center", inline: "center" });
+      el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
     }
   }
 
@@ -440,6 +581,7 @@
     clone.querySelectorAll("script,style,noscript,template,svg,iframe").forEach((n) => n.remove());
     const text = (clone.innerText || "")
       .replace(/[ \t]+/g, " ")
+      .replace(/ ?\n ?/g, "\n") // lines holding only spaces cost tokens too
       .replace(/\n{3,}/g, "\n\n")
       .trim();
     return text.length > maxChars ? text.slice(0, maxChars) + "\n... truncated" : text;
@@ -546,6 +688,13 @@
           }
           case "pointer:snapshot":
             return sendResponse({ ok: true, text: snapshot(msg.params || {}) });
+          case "pointer:find":
+            return sendResponse({ ok: true, text: findElements(msg.params || {}) });
+          case "pointer:baseline":
+            baseline = { lines: viewLines() };
+            return sendResponse({ ok: true, docId: DOC_ID });
+          case "pointer:changes":
+            return sendResponse({ ok: true, ...changes(msg.params || {}) });
           case "pointer:locate": {
             const el = resolve(msg.params || {});
             scrollIntoView(el);
@@ -579,11 +728,14 @@
             const amount = p.amount ?? 600;
             if (p.ref) {
               const el = findByRef(p.ref);
-              el?.scrollIntoView({ block: "center" });
-            } else if (p.direction === "up") window.scrollBy(0, -amount);
-            else if (p.direction === "left") window.scrollBy(-amount, 0);
-            else if (p.direction === "right") window.scrollBy(amount, 0);
-            else window.scrollBy(0, amount);
+              el?.scrollIntoView({ block: "center", behavior: "instant" });
+            } else {
+              // "instant": pages with smooth scrolling animate, and in a
+              // background tab that animation stalls, so nothing would move.
+              const dx = p.direction === "left" ? -amount : p.direction === "right" ? amount : 0;
+              const dy = p.direction === "up" ? -amount : dx ? 0 : amount;
+              window.scrollBy({ left: dx, top: dy, behavior: "instant" });
+            }
             say(`scroll ${p.direction || "down"}`, "");
             return sendResponse({ ok: true, y: Math.round(window.scrollY) });
           }

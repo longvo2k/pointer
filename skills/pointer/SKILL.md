@@ -73,38 +73,51 @@ disk (it must already be running the build that supports it); otherwise ask the 
 Do not relaunch or replace their Chrome. The whole value here is their profile, their cookies, their
 extensions.
 
-## 2. The loop: snapshot → act → snapshot
+## 2. The loop: snapshot once, then read the change reports
 
-Everything is ref-driven. `snapshot` returns compact text, one line per actionable element:
+Everything is ref-driven. `snapshot` lists what is **on screen**, one line per actionable element,
+and counts what is above or below:
 
 ```
-url: https://paveinspect.com/
-title: PAVE Inspect
-- link "LOGIN" [ref=e1] href="/login"
-- clickable "TRY PAVE" [ref=e3]
-- textbox "EMAIL" [ref=e5]
-- button "SUBMIT" [ref=e13]
+url: https://github.com/microsoft/vscode
+title: GitHub - microsoft/vscode
+view: 0% down · 0 elements above, 183 below (scroll, find, or snapshot scope "all")
+- button "Platform" [ref=e3]
+- link "Issues 5k+ (5k+)" [ref=e16]
+- button "Code" [ref=e31]
 ```
 
-Refs are valid **only until the next snapshot or navigation**. That is deliberate: it keeps the
-agent honest about what is currently on screen instead of replaying stale coordinates. So:
+Refs stay valid until the page navigates, across snapshots and scrolls. Every `click`, `fill`,
+`press`, and `scroll` returns what changed on screen, so you rarely need a fresh snapshot:
 
-1. `snapshot` right before you act.
-2. Act on one ref.
-3. `snapshot` again if the DOM could have changed — usually it did.
+```
+clicked button "Code" → https://github.com/microsoft/vscode
+changes in view:
++ button "Clone with HTTPS" [ref=e286]
++ link "Download ZIP" [ref=e292]
+~ button "Code" [ref=e31] expanded
+```
 
-Never guess a CSS selector when a ref exists. If you must use one, pass it as the selector and
-confirm the result in the next snapshot.
+`+` appeared, `-` disappeared, `~` changed state. If the action loaded a new page or changed most of
+the screen, the report is the new view instead. `scroll` lists what came into view. `no change in
+view` means the action did nothing visible; check before repeating it.
+
+1. `snapshot` once when you arrive on a page (or use `find` if you know what you want).
+2. Act on a ref, and read the report.
+3. Snapshot again only when the report is not enough.
+
+To reach something off screen, use `find "words"` (it searches the whole page and marks off-screen
+matches) and click the ref; the click scrolls to it. `snapshot` with `scope: "all"` lists the whole
+page and `hrefs: true` adds link targets, but both cost more tokens.
+
+Never guess a CSS selector when a ref exists.
 
 ```bash
 ./scripts/pointer snap
-./scripts/pointer click e3
-./scripts/pointer snap            # refs and page state have moved
+./scripts/pointer find "sign up"
+./scripts/pointer click e14        # prints what changed
 ./scripts/pointer fill e6 "demo@example.com"
 ```
-
-`click` and `fill` report the resulting URL. A tab switch can change state without a full page load,
-so read that line instead of assuming navigation happened only when the URL changes.
 
 ## 3. Pick the right operation
 
@@ -113,7 +126,8 @@ so read that line instead of assuming navigation happened only when the URL chan
 | Is the extension connected? | `browser_status` | `status` |
 | Open a page (background tab) | `tab_open` | `open <url>` |
 | See or switch tabs | `tabs_list`, `tab_focus` | `tabs`, `focus <tabId>` |
-| Structure and refs | `snapshot` | `snap` |
+| What is on screen, with refs | `snapshot` (`scope`, `hrefs`) | `snap [--all] [--hrefs]` |
+| Find an element anywhere on the page | `find` | `find <words>` |
 | Click | `click` | `click <ref\|selector>` |
 | Replace a field's contents | `fill` (optionally `submit`) | `fill <ref> <text>` |
 | Press Enter, Tab, Escape, Cmd/Ctrl+A | `press` | `press <key>` |
@@ -127,8 +141,7 @@ Notes that save a round trip:
 
 - `fill` clicks the field, selects everything, and types — it replaces rather than appends.
   Add `submit: true` to press Enter afterwards.
-- `wait_for` is cheaper than polling with repeated snapshots after a click that loads data, but a
-  fresh snapshot is still required before the next ref-based action.
+- `wait_for` is cheaper than polling with repeated snapshots after a click that loads data.
 - `screenshot` captures the agent's tab, including the pointer label, even when the human is on
   another tab. Use it when layout or visual state matters; use `snapshot` when you need to act.
 - Actions do not bring the agent's tab to the front. If you need the human to watch, call

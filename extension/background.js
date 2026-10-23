@@ -30,7 +30,7 @@ const GROUP_TITLE_MAX = 24;
 
 // Toggle when hunting a slow command; logs go to the extension worker console.
 const TRACE = false;
-const BUILD = "0.2.4";
+const BUILD = "0.2.5";
 const traceStart = Date.now();
 self.__pointerBuild = BUILD;
 function trace(...args) {
@@ -590,6 +590,32 @@ async function fillAt(tabId, x, y, text, beforePress) {
   await cdp(tabId, "Input.insertText", { text: String(text) });
 }
 
+// ------------------------------------------------------------ change report --
+/** Record what is on screen before an action. Returns the document id. */
+async function takeBaseline(tabId) {
+  try {
+    return (await page(tabId, "pointer:baseline", {})).docId;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * What changed on screen since the baseline. If the action started a page
+ * load, wait for it so the report describes the new page.
+ */
+async function collectChanges(tabId, docId, opts = {}) {
+  if (!docId) return null;
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  if (tab?.status === "loading") await waitForLoad(tabId, 10000);
+  try {
+    const { ok, ...report } = await page(tabId, "pointer:changes", { docId, ...opts });
+    return report;
+  } catch {
+    return null;
+  }
+}
+
 // ----------------------------------------------------------------- dispatch --
 function assertNotStopped() {
   if (stopped) {
@@ -702,6 +728,8 @@ async function dispatch(method, params) {
       return await withBackgroundInput(tab, async () => {
         const spot = await page(tab.id, "pointer:locate", params);
         trace("act located", spot.x, spot.y);
+        // After locate: it may have scrolled the target into view.
+        const docId = await takeBaseline(tab.id);
         const action = params.kind || "click";
         const label = spot.name || (params.ref ? params.ref : params.selector);
 
@@ -728,11 +756,19 @@ async function dispatch(method, params) {
         }
         trace("act input done");
 
-        // Give the page a beat to react so the next snapshot sees the result.
+        // Give the page a beat to react so the report sees the result.
         await sleep(params.settleMs ?? 240);
+        const changes = await collectChanges(tab.id, docId);
         const after = await chrome.tabs.get(tab.id);
         trace("act done");
-        return { ok: true, target: { role: spot.role, name: spot.name }, url: after.url, x: spot.x, y: spot.y };
+        return {
+          ok: true,
+          target: { role: spot.role, name: spot.name },
+          url: after.url,
+          x: spot.x,
+          y: spot.y,
+          changes,
+        };
       });
     }
 
@@ -745,6 +781,7 @@ async function dispatch(method, params) {
       return await withBackgroundInput(tab, async () => {
         const spot = await page(tab.id, "pointer:locate", params);
         const label = spot.name || params.ref || "field";
+        const docId = await takeBaseline(tab.id);
 
         await Promise.race([
           page(tab.id, "pointer:act", {
@@ -762,8 +799,9 @@ async function dispatch(method, params) {
         if (params.submit) {
           await pressKey(tab.id, "Enter");
         }
-        await sleep(120);
-        return { ok: true, target: label, url: (await chrome.tabs.get(tab.id)).url };
+        await sleep(params.submit ? 240 : 120);
+        const changes = await collectChanges(tab.id, docId);
+        return { ok: true, target: label, url: (await chrome.tabs.get(tab.id)).url, changes };
       });
     }
 
@@ -775,9 +813,11 @@ async function dispatch(method, params) {
       await markTab(tab.id);
       return await withBackgroundInput(tab, async () => {
         await page(tab.id, "pointer:agent-window", { ms: 2000 });
+        const docId = await takeBaseline(tab.id);
         await pressKey(tab.id, params.key || "Enter");
-        await sleep(150);
-        return { ok: true, key: params.key || "Enter", url: (await chrome.tabs.get(tab.id)).url };
+        await sleep(240);
+        const changes = await collectChanges(tab.id, docId);
+        return { ok: true, key: params.key || "Enter", url: (await chrome.tabs.get(tab.id)).url, changes };
       });
     }
 
@@ -786,8 +826,20 @@ async function dispatch(method, params) {
       const tab = await resolveTab(params);
       lastTabId = tab.id;
       await markTab(tab.id);
+      const docId = await takeBaseline(tab.id);
       const res = await page(tab.id, "pointer:scroll", params);
+      await sleep(150); // let lazy content render
+      // Only what scrolled into view; what left the screen is noise here.
+      res.changes = await collectChanges(tab.id, docId, { addedOnly: true });
       return res;
+    }
+
+    case "page.find": {
+      const tab = await resolveTab(params);
+      lastTabId = tab.id;
+      await markTab(tab.id);
+      const res = await page(tab.id, "pointer:find", params);
+      return { text: res.text };
     }
 
     case "page.wait": {
