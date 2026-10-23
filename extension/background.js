@@ -109,7 +109,7 @@ function connect() {
       sendOn({ id: msg.id, ok: true, result });
     } catch (err) {
       trace("failed", msg.method, `${Date.now() - started}ms`, err?.message || String(err));
-      sendOn({ id: msg.id, ok: false, error: err instanceof Error ? err.message : typeof err === "string" ? err : "Command failed" });
+      sendOn({ id: msg.id, ok: false, error: err instanceof Error ? String(err.message) : "Command failed" });
     }
   });
 
@@ -723,7 +723,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 /** A wait the caller asked for, kept between 0 and `max` ms. */
 function clampMs(value, fallback, max) {
   const n = Number(value);
-  return Number.isFinite(n) ? Math.min(Math.max(n, 0), max) : fallback;
+  if (!Number.isFinite(n)) return fallback;
+  if (n > max) return max;
+  if (n < 0) return 0;
+  return n;
 }
 
 /**
