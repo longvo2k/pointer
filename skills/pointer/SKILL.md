@@ -13,7 +13,8 @@ React handlers and pointer checks behave like a real user.
 If the human switches to another tab or window, the agent keeps working in its own tab without
 stealing focus. The agent's tabs are placed in a Chrome tab group named after the agent (for example
 **Claude**) and their titles carry the same badge (for example `Claude · PAVE Inspect`) so the human
-can find them at a glance. Only `tab_open` and `tab_focus` bring a tab to the front.
+can find them at a glance. `tab_open` opens tabs in the background; only `tab_focus` (or
+`tab_open` with `focus: true`) brings a tab to the front.
 
 That visibility is the point. The human is watching a real browser with real logins, real money, and
 real messages in it. Work at a pace they can follow, and treat irreversible actions differently
@@ -110,7 +111,7 @@ so read that line instead of assuming navigation happened only when the URL chan
 | You need | MCP tool | CLI |
 |---|---|---|
 | Is the extension connected? | `browser_status` | `status` |
-| Open a page and raise it | `tab_open` | `open <url>` |
+| Open a page (background tab) | `tab_open` | `open <url>` |
 | See or switch tabs | `tabs_list`, `tab_focus` | `tabs`, `focus <tabId>` |
 | Structure and refs | `snapshot` | `snap` |
 | Click | `click` | `click <ref\|selector>` |
@@ -149,8 +150,9 @@ The tool makes actions easy. Judgment is still yours.
 - **Respect the stop signal.** If a tool returns `Stopped by the human` or the user interrupted with
   Escape or a real click, do not retry. Stop, summarize what happened, and ask how to proceed.
   Retrying after a takeover is the quickest way to lose trust.
-- **Stay in one tab unless the task needs another.** `tab_open` and `tab_focus` raise the tab once;
-  after that, actions run in place and do not pull the human away from what they are doing. If they
+- **Stay in one tab unless the task needs another.** `tab_open` works in the background and never
+  pulls the human away from what they are doing. Raise a tab with `tab_focus` (or `focus: true`)
+  only when the human asks to watch. If they
   switch tabs, keep working in the agent's tab and let the title badge show which one it is.
 - **Do not hide the pointer or rush the animation.** The human's ability to see the action coming is
   the safety mechanism, not an inconvenience.

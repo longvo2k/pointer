@@ -4,7 +4,7 @@
  *
  *   pointer serve            run the local hub (the extension connects to it)
  *   pointer status           is the extension connected?
- *   pointer open <url>       open a tab and bring it forward
+ *   pointer open <url>       open a background tab (--focus to bring it forward)
  *   pointer tabs             list tabs
  *   pointer focus <tabId>
  *   pointer snap             interactive elements with refs
@@ -215,9 +215,11 @@ async function main() {
       return print(`reloading ${(await rpc("ext.reloadAll")).reloading} extension(s)`);
     case "tabs":
       return print((await tool("tabs_list")).text);
-    case "open":
-      if (!rest[0]) throw new Error("Usage: pointer open <url>");
-      return print((await tool("tab_open", { url: rest[0] })).text);
+    case "open": {
+      const url = rest.find((a) => a !== "--focus");
+      if (!url) throw new Error("Usage: pointer open <url> [--focus]");
+      return print((await tool("tab_open", { url, focus: rest.includes("--focus") })).text);
+    }
     case "focus":
       if (!rest[0]) throw new Error("Usage: pointer focus <tabId>");
       return print((await tool("tab_focus", { tabId: Number(rest[0]) })).text);
@@ -271,7 +273,7 @@ function usage() {
   pointer use <id>              route actions to one Chrome instance
   pointer reload                reload every connected extension from disk
   pointer tabs                  list tabs
-  pointer open <url>            open and focus a tab
+  pointer open <url> [--focus]  open a background tab (--focus raises it)
   pointer focus <tabId>         bring a tab forward
   pointer snap                  interactive elements with refs
   pointer click <ref|selector>  move the pointer, then click

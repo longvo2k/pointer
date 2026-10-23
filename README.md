@@ -16,8 +16,10 @@ screen.
   handlers and pointer checks behave.
 - Every tab the agent drives moves into a Chrome tab group named after the agent (for example,
   Claude), and the tab title carries the same badge.
-- Only `tab_open` and `tab_focus` bring a tab forward. Snapshot, click, fill, scroll, read, and
-  screenshot keep working while you are in another tab or window.
+- The agent never pulls you away from what you are doing. `tab_open` opens a background tab in the
+  agent's group, and snapshot, click, fill, scroll, read, and screenshot keep working while you are in
+  another tab, window, or Chrome profile. Only `tab_focus` (or `pointer open <url> --focus`) brings a
+  tab forward.
 
 [![An agent drives a real Chrome tab: it clicks a plan, fills an email, creates a workspace, and copies the invite link, with the pointer and action labels visible](demo/pointer-demo.gif)](demo/pointer-demo.mp4)
 
@@ -198,7 +200,7 @@ the only place that knows which browser and tab is active.
 | Variable | Default | Meaning |
 |---|---|---|
 | `POINTER_PORT` | `8790` | hub port. The extension always connects to 8790, so change `DEFAULT_PORT` in `extension/background.js` to match |
-| `POINTER_FOCUS_WINDOW` | `1` | raise the OS window for `tab_open` / `tab_focus` (other actions never steal focus) |
+| `POINTER_FOCUS_WINDOW` | `1` | also raise the OS window when `tab_focus` (or `open --focus`) brings a tab forward |
 | `POINTER_AGENT` | `agent` | name shown in status and the tab-title badge (`Claude · PAVE Inspect`) |
 
 ## Acknowledgements

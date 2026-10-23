@@ -30,7 +30,7 @@ const GROUP_TITLE_MAX = 24;
 
 // Toggle when hunting a slow command; logs go to the extension worker console.
 const TRACE = false;
-const BUILD = "0.2.3";
+const BUILD = "0.2.4";
 const traceStart = Date.now();
 self.__pointerBuild = BUILD;
 function trace(...args) {
@@ -214,6 +214,30 @@ async function prepareTab(tab, { bringToFront = false, focusWindow = true } = {}
     } catch {}
   }
   lastFocusedTab = tab.id;
+}
+
+/**
+ * Create a tab without activating it or raising any window. Prefer the window
+ * the agent already works in, so new tabs join its group instead of landing in
+ * whatever window the human last clicked. With no window open in this profile,
+ * create an unfocused one.
+ */
+async function openBackgroundTab(url) {
+  let windowId;
+  const last = lastTabId != null ? await chrome.tabs.get(lastTabId).catch(() => null) : null;
+  if (last) {
+    windowId = last.windowId;
+  } else {
+    // Each profile runs its own copy of the extension, so this is a window of
+    // the agent's profile, never one from the profile the human is in.
+    const win = await chrome.windows.getLastFocused({ windowTypes: ["normal"] }).catch(() => null);
+    windowId = win?.id;
+  }
+  if (windowId == null) {
+    const win = await chrome.windows.create({ url, focused: false });
+    return win.tabs?.[0] ?? (await chrome.tabs.query({ windowId: win.id }))[0];
+  }
+  return chrome.tabs.create({ windowId, url, active: false });
 }
 
 function agentGroupTitle() {
@@ -605,17 +629,21 @@ async function dispatch(method, params) {
     }
 
     case "tabs.open": {
-      const tab = await chrome.tabs.create({ url: params.url || "about:blank", active: true });
+      // Open in the background, like Claude in Chrome: the human stays on the
+      // tab and window (or profile) they are using. Only an explicit
+      // focus: true brings the new tab forward.
+      const tab = await openBackgroundTab(params.url || "about:blank");
       lastTabId = tab.id;
-      lastFocusedTab = tab.id;
-      if (params.focusWindow !== false) {
-        try {
-          await chrome.windows.update(tab.windowId, { focused: true });
-        } catch {}
+      // Group it now so the human can spot it; the title badge follows on load.
+      markedTabs.add(tab.id);
+      await ensureAgentGroup(tab.id).catch(() => {});
+      if (params.focus === true) {
+        await prepareTab(tab, { bringToFront: true, focusWindow: params.focusWindow !== false });
       }
       await waitForLoad(tab.id);
       await markTab(tab.id);
-      return { tabId: tab.id, url: tab.url || params.url };
+      const fresh = await chrome.tabs.get(tab.id).catch(() => tab);
+      return { tabId: tab.id, url: fresh.url || params.url, focused: params.focus === true };
     }
 
     case "tabs.focus": {
