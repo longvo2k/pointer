@@ -125,7 +125,9 @@ Never guess a CSS selector when a ref exists.
 |---|---|---|
 | Is the extension connected? | `browser_status` | `status` |
 | Open a page (background tab) | `tab_open` | `open <url>` |
-| See or switch tabs | `tabs_list`, `tab_focus` | `tabs`, `focus <tabId>` |
+| See or switch tabs (without disturbing the human) | `tabs_list`, `tab_select` | `tabs`, `select <tabId>` |
+| Close your tabs when done | `tab_close` (`all: true`) | `close [tabId\|--all]` |
+| Bring a tab forward (only if the human asks to watch) | `tab_focus` | `focus <tabId>` |
 | What is on screen, with refs | `snapshot` (`scope`, `hrefs`) | `snap [--all] [--hrefs]` |
 | Find an element anywhere on the page | `find` | `find <words>` |
 | Click | `click` | `click <ref\|selector>` |
@@ -171,6 +173,11 @@ The tool makes actions easy. Judgment is still yours.
 - **Respect the stop signal.** If a tool returns `Stopped by the human` or the user interrupted with
   Escape or a real click, do not retry. Stop, summarize what happened, and ask how to proceed.
   Retrying after a takeover is the quickest way to lose trust.
+- **Clean up.** Close the tabs you opened with `tab_close` (`all: true`) when the task is done, unless
+  the human wants to keep them. Don't open a fresh tab to retry something that failed; fix the cause.
+- **If a result carries the "sent as page events" note,** another extension (often a password
+  manager) is blocking Chrome's input driver on that page. Check the change report; if nothing
+  happened, ask the human to close that popup instead of retrying.
 - **Stay in one tab unless the task needs another.** `tab_open` works in the background and never
   pulls the human away from what they are doing. Raise a tab with `tab_focus` (or `focus: true`)
   only when the human asks to watch. If they

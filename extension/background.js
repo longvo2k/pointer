@@ -20,6 +20,7 @@ let agentName = "agent";
 let stopped = false;
 const attached = new Set();
 const markedTabs = new Set();
+const openedTabs = new Set(); // tabs tab_open created; tab_close may close these
 const agentGroups = new Map(); // windowId -> Chrome tab group id
 let modifier = "Meta"; // set from platform info
 
@@ -30,7 +31,7 @@ const GROUP_TITLE_MAX = 24;
 
 // Toggle when hunting a slow command; logs go to the extension worker console.
 const TRACE = false;
-const BUILD = "0.2.6";
+const BUILD = "0.2.8";
 const traceStart = Date.now();
 self.__pointerBuild = BUILD;
 function trace(...args) {
@@ -54,15 +55,31 @@ async function getInstanceId() {
   }
 }
 
+let reconnectTimer = null;
+let heartbeat = null;
+
+/**
+ * One socket at a time. Every handler acts only on the socket it belongs to:
+ * a stale socket closing must never clear or close the live one, or a fresh
+ * connect() opens a second socket while the first stays open (the hub then
+ * routes commands to a connection that never said hello).
+ */
 function connect() {
   if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) return;
-  socket = new WebSocket(HUB_URL);
+  clearTimeout(reconnectTimer);
+  reconnectTimer = null;
+  const ws = new WebSocket(HUB_URL);
+  socket = ws;
+  const sendOn = (obj) => {
+    if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+  };
 
-  socket.addEventListener("open", async () => {
+  ws.addEventListener("open", async () => {
+    if (socket !== ws) return ws.close();
     connected = true;
     reconnectDelay = 800;
     const instanceId = await getInstanceId();
-    send({
+    sendOn({
       event: "hello",
       name: "pointer-extension",
       version: chrome.runtime.getManifest().version,
@@ -70,9 +87,13 @@ function connect() {
       build: self.__pointerBuild || null,
     });
     setBadge("on");
+    // MV3 stops an idle service worker after ~30s, which drops the socket.
+    // Traffic every 20s keeps it alive (Chrome 116+).
+    clearInterval(heartbeat);
+    heartbeat = setInterval(() => sendOn({ event: "ping" }), 20000);
   });
 
-  socket.addEventListener("message", async (e) => {
+  ws.addEventListener("message", async (e) => {
     let msg;
     try {
       msg = JSON.parse(e.data);
@@ -84,24 +105,26 @@ function connect() {
     try {
       const result = await dispatch(msg.method, msg.params || {});
       trace("handled", msg.method, `${Date.now() - started}ms`);
-      send({ id: msg.id, ok: true, result });
+      sendOn({ id: msg.id, ok: true, result });
     } catch (err) {
       trace("failed", msg.method, `${Date.now() - started}ms`, err?.message || String(err));
-      send({ id: msg.id, ok: false, error: err?.message || String(err) });
+      sendOn({ id: msg.id, ok: false, error: err?.message || String(err) });
     }
   });
 
-  const drop = () => {
-    connected = false;
-    setBadge("off");
+  ws.addEventListener("close", () => {
+    if (socket !== ws) return; // an old socket; the live one is unaffected
     socket = null;
-    setTimeout(connect, reconnectDelay);
+    connected = false;
+    clearInterval(heartbeat);
+    setBadge("off");
+    clearTimeout(reconnectTimer);
+    reconnectTimer = setTimeout(connect, reconnectDelay);
     reconnectDelay = Math.min(reconnectDelay * 1.7, 8000);
-  };
-  socket.addEventListener("close", drop);
-  socket.addEventListener("error", () => {
+  });
+  ws.addEventListener("error", () => {
     try {
-      socket?.close();
+      ws.close();
     } catch {}
   });
 }
@@ -116,7 +139,11 @@ function setBadge(state) {
 }
 
 // The service worker can be evicted; this keeps reconnecting while idle.
-chrome.alarms.create("pointer-keepalive", { periodInMinutes: 0.5 });
+// Create the alarm only once: re-creating it on every worker start resets its
+// clock, so a worker that keeps waking up early could postpone it forever.
+chrome.alarms.get("pointer-keepalive").then((alarm) => {
+  if (!alarm) chrome.alarms.create("pointer-keepalive", { periodInMinutes: 0.5 });
+});
 chrome.alarms.onAlarm.addListener((a) => {
   if (a.name === "pointer-keepalive") connect();
 });
@@ -445,9 +472,23 @@ chrome.tabs.onRemoved.addListener((tabId) => forgetTab(tabId));
 
 function forgetTab(tabId, { keepMarks = false } = {}) {
   attached.delete(tabId);
+  if (!keepMarks) openedTabs.delete(tabId);
   dialogs.delete(tabId);
   captures.delete(tabId);
   if (!keepMarks) markedTabs.delete(tabId);
+}
+
+/**
+ * Chrome refuses debugger input on a page that contains another extension's
+ * frame (a password manager's autofill popup, for example). Reading still
+ * works through the content script, so input falls back to page events.
+ */
+const PICKER_INPUTS = new Set(["date", "time", "datetime-local", "month", "week", "color", "range"]);
+
+function debuggerBlocked(err) {
+  return /chrome-extension:\/\/ URL of different extension|Cannot access a chrome-extension/i.test(
+    String(err?.message || err)
+  );
 }
 
 // ---------------------------------------------------------------- dialogs ---
@@ -526,6 +567,11 @@ function remoteText(arg) {
   return arg.unserializableValue || arg.description || arg.type || "";
 }
 
+/** The first stack frame from the page itself, not an extension's console hook. */
+function pageFrame(frames = []) {
+  return frames.find((f) => f.url && !f.url.startsWith("chrome-extension://")) || frames[0];
+}
+
 function where(frame) {
   if (!frame?.url) return "";
   const file = frame.url.split(/[?#]/)[0].split("/").pop() || frame.url;
@@ -548,12 +594,12 @@ chrome.debugger.onEvent.addListener((source, method, p) => {
     case "Runtime.consoleAPICalled": {
       const level = { warning: "warning", error: "error", assert: "error" }[p.type] || (p.type === "debug" ? "debug" : "log");
       const text = (p.args || []).map(remoteText).join(" ");
-      return pushLog(tabId, { level, text: text + where(p.stackTrace?.callFrames?.[0]) });
+      return pushLog(tabId, { level, text: text + where(pageFrame(p.stackTrace?.callFrames)) });
     }
     case "Runtime.exceptionThrown": {
       const d = p.exceptionDetails || {};
       const text = d.exception?.description?.split("\n")[0] || d.text || "Uncaught exception";
-      return pushLog(tabId, { level: "error", text: text + where(d.stackTrace?.callFrames?.[0] || d) });
+      return pushLog(tabId, { level: "error", text: text + where(pageFrame(d.stackTrace?.callFrames) || d) });
     }
     case "Log.entryAdded": {
       const e = p.entry || {};
@@ -563,6 +609,8 @@ chrome.debugger.onEvent.addListener((source, method, p) => {
     case "Network.requestWillBeSent": {
       const c = captures.get(tabId);
       if (!c?.network) return;
+      // Other extensions' own files are not the page's traffic.
+      if (p.request.url.startsWith("chrome-extension://")) return;
       if (!c.net.has(p.requestId)) c.order.push(p.requestId);
       c.net.set(p.requestId, {
         id: p.requestId,
@@ -821,8 +869,17 @@ async function dispatch(method, params) {
           title: t.title,
           url: t.url,
           active: t.active,
+          agent: t.id === lastTabId,
           windowId: t.windowId,
         }));
+    }
+
+    case "tabs.select": {
+      // Switch the agent's working tab without bringing it forward.
+      const tab = await chrome.tabs.get(Number(params.tabId));
+      lastTabId = tab.id;
+      await markTab(tab.id);
+      return { tabId: tab.id, url: tab.url, title: tab.title };
     }
 
     case "tabs.open": {
@@ -831,6 +888,7 @@ async function dispatch(method, params) {
       // focus: true brings the new tab forward.
       const tab = await openBackgroundTab(params.url || "about:blank");
       lastTabId = tab.id;
+      openedTabs.add(tab.id);
       // Group it now so the human can spot it; the title badge follows on load.
       markedTabs.add(tab.id);
       await ensureAgentGroup(tab.id).catch(() => {});
@@ -852,11 +910,21 @@ async function dispatch(method, params) {
     }
 
     case "tabs.close": {
-      const tab = await resolveTab(params);
-      await chrome.tabs.remove(tab.id);
-      markedTabs.delete(tab.id);
-      if (lastTabId === tab.id) lastTabId = null;
-      return { closed: tab.id };
+      // Only tabs the agent opened or worked in: never the human's other tabs.
+      const ids = params.all ? [...new Set([...openedTabs, ...markedTabs])] : [Number(params.tabId ?? lastTabId)];
+      const closed = [];
+      for (const id of ids) {
+        if (!openedTabs.has(id) && !markedTabs.has(id)) {
+          if (!params.all) throw new Error(`Tab ${id} is not one the agent opened or used; ask the human to close it.`);
+          continue;
+        }
+        await chrome.tabs.remove(id).catch(() => {});
+        openedTabs.delete(id);
+        markedTabs.delete(id);
+        if (lastTabId === id) lastTabId = null;
+        closed.push(id);
+      }
+      return { closed };
     }
 
     case "page.navigate": {
@@ -924,9 +992,16 @@ async function dispatch(method, params) {
 
         const markAgentInput = () =>
           page(tab.id, "pointer:agent-window", { ms: 2000 }).catch(() => {});
+        let synthetic = false;
         if (action === "click") {
-          const { dialog } = await raceDialog(tab.id, clickAt(tab.id, spot.x, spot.y, markAgentInput));
-          if (dialog) return { ok: true, target: { role: spot.role, name: spot.name }, url: tab.url, dialog };
+          try {
+            const { dialog } = await raceDialog(tab.id, clickAt(tab.id, spot.x, spot.y, markAgentInput));
+            if (dialog) return { ok: true, target: { role: spot.role, name: spot.name }, url: tab.url, dialog };
+          } catch (err) {
+            if (!debuggerBlocked(err)) throw err;
+            await page(tab.id, "pointer:domclick", params);
+            synthetic = true;
+          }
         } else if (action === "hover") {
           await mouseTo(tab.id, spot.x, spot.y);
         }
@@ -944,6 +1019,7 @@ async function dispatch(method, params) {
           x: spot.x,
           y: spot.y,
           changes,
+          synthetic,
         };
       });
     }
@@ -968,19 +1044,30 @@ async function dispatch(method, params) {
         ]);
         const markAgentInput = () =>
           page(tab.id, "pointer:agent-window", { ms: 2000 }).catch(() => {});
+        // Date, time, color and range inputs are segmented pickers that ignore
+        // typed text; setting the value directly is the only reliable way.
+        const pickerInput = PICKER_INPUTS.has(spot.inputType);
+        let synthetic = params.trusted === false;
+        const domFill = async () => {
+          await page(tab.id, "pointer:domfill", { ref: params.ref, selector: params.selector, text: params.text });
+          if (params.submit) await page(tab.id, "pointer:dompress", { key: "Enter" });
+        };
         const typing = (async () => {
-          if (params.trusted === false) {
-            await page(tab.id, "pointer:domfill", { ref: params.ref, selector: params.selector, text: params.text });
-          } else {
-            await fillAt(tab.id, spot.x, spot.y, params.text ?? "", markAgentInput);
-          }
+          if (synthetic || pickerInput) return domFill();
+          await fillAt(tab.id, spot.x, spot.y, params.text ?? "", markAgentInput);
           if (params.submit) await pressKey(tab.id, "Enter");
         })();
-        const { dialog } = await raceDialog(tab.id, typing);
-        if (dialog) return { ok: true, target: label, url: tab.url, dialog };
+        try {
+          const { dialog } = await raceDialog(tab.id, typing);
+          if (dialog) return { ok: true, target: label, url: tab.url, dialog };
+        } catch (err) {
+          if (!debuggerBlocked(err)) throw err;
+          await domFill();
+          synthetic = true;
+        }
         await sleep(params.submit ? 240 : 120);
         const changes = await collectChanges(tab.id, docId);
-        return { ok: true, target: label, url: (await chrome.tabs.get(tab.id)).url, changes };
+        return { ok: true, target: label, url: (await chrome.tabs.get(tab.id)).url, changes, synthetic };
       });
     }
 
@@ -994,11 +1081,18 @@ async function dispatch(method, params) {
       return await withBackgroundInput(tab, async () => {
         await page(tab.id, "pointer:agent-window", { ms: 2000 });
         const docId = await takeBaseline(tab.id);
-        const { dialog } = await raceDialog(tab.id, pressKey(tab.id, params.key || "Enter"));
-        if (dialog) return { ok: true, key: params.key || "Enter", url: tab.url, dialog };
+        let synthetic = false;
+        try {
+          const { dialog } = await raceDialog(tab.id, pressKey(tab.id, params.key || "Enter"));
+          if (dialog) return { ok: true, key: params.key || "Enter", url: tab.url, dialog };
+        } catch (err) {
+          if (!debuggerBlocked(err)) throw err;
+          await page(tab.id, "pointer:dompress", { key: params.key || "Enter" });
+          synthetic = true;
+        }
         await sleep(240);
         const changes = await collectChanges(tab.id, docId);
-        return { ok: true, key: params.key || "Enter", url: (await chrome.tabs.get(tab.id)).url, changes };
+        return { ok: true, key: params.key || "Enter", url: (await chrome.tabs.get(tab.id)).url, changes, synthetic };
       });
     }
 
@@ -1062,7 +1156,13 @@ async function dispatch(method, params) {
             sleep(1200),
           ]);
         }
-        const { root } = await cdp(tab.id, "DOM.getDocument", { depth: 0 });
+        const { root } = await cdp(tab.id, "DOM.getDocument", { depth: 0 }).catch((err) => {
+          if (!debuggerBlocked(err)) throw err;
+          throw new Error(
+            "Chrome blocks file uploads here because another extension (often a password manager) put a frame on this page. " +
+              "Ask the human to close that popup or attach the file themselves."
+          );
+        });
         const { nodeId } = await cdp(tab.id, "DOM.querySelector", {
           nodeId: root.nodeId,
           selector: '[data-pointer-upload="1"]',

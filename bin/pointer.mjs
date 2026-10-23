@@ -221,6 +221,13 @@ async function main() {
       if (!url) throw new Error("Usage: pointer open <url> [--focus]");
       return print((await tool("tab_open", { url, focus: rest.includes("--focus") })).text);
     }
+    case "select":
+      if (!rest[0]) throw new Error("Usage: pointer select <tabId>");
+      return print((await tool("tab_select", { tabId: Number(rest[0]) })).text);
+    case "close":
+      return print(
+        (await tool("tab_close", rest[0] === "--all" ? { all: true } : rest[0] ? { tabId: Number(rest[0]) } : {})).text
+      );
     case "focus":
       if (!rest[0]) throw new Error("Usage: pointer focus <tabId>");
       return print((await tool("tab_focus", { tabId: Number(rest[0]) })).text);
@@ -316,6 +323,8 @@ function usage() {
   pointer reload                reload every connected extension from disk
   pointer tabs                  list tabs
   pointer open <url> [--focus]  open a background tab (--focus raises it)
+  pointer select <tabId>        work in a tab without bringing it forward
+  pointer close [tabId|--all]   close the agent's tab(s)
   pointer focus <tabId>         bring a tab forward
   pointer snap [--all] [--hrefs] on-screen elements with refs
   pointer find <words>          search the whole page for elements

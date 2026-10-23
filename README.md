@@ -126,15 +126,31 @@ Changes to the hub load when `pointer.mjs serve` restarts. Stop the old process 
 }
 ```
 
-Run `pointer setup` to print this snippet with your real path, or with Claude Code:
+OpenCode 2.x nests servers under `mcp.servers` (or run
+`opencode mcp add pointer -- node ~/.pointer/bin/mcp.mjs`):
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "pointer": { "type": "local", "command": ["node", "/Users/you/.pointer/bin/mcp.mjs"] }
+    }
+  }
+}
+```
+
+Run `pointer setup` to print the first snippet with your real path, or with Claude Code:
 
 ```bash
 claude mcp add pointer -- node ~/.pointer/bin/mcp.mjs
 ```
 
-Tools: `browser_status`, `tabs_list`, `tab_open`, `tab_focus`, `snapshot`, `find`, `click`, `fill`,
-`press`, `scroll`, `read_text`, `wait_for`, `screenshot`, `dialog`, `upload`, `console`, `network`,
-`stop`.
+Tools: `browser_status`, `tabs_list`, `tab_open`, `tab_select`, `tab_close`, `tab_focus`, `snapshot`,
+`find`, `click`, `fill`, `press`, `scroll`, `read_text`, `wait_for`, `screenshot`, `dialog`, `upload`,
+`console`, `network`, `stop`.
+
+- `tab_select` switches the tab the agent works in without bringing it forward; `tab_close` closes
+  only tabs the agent opened or used (`all: true` to clean up after a task).
 
 - `dialog` answers an `alert`/`confirm`/`prompt`. When a click opens one, the click returns right away
   and says so, instead of hanging while the page is paused.
@@ -174,6 +190,10 @@ pointer use 3f9c1a2b
 ## Design boundaries
 
 - Snapshot covers the top frame. It does not traverse open shadow roots or reach into iframes yet.
+- Password managers and similar extensions can put their own frame into a page (an autofill popup,
+  for example), and Chrome then refuses debugger input on that tab. Pointer falls back to page events
+  for click, fill, and press, and says so in the result; most sites accept them. File upload has no
+  fallback.
 - There is no `eval` tool. Arbitrary JS in a logged-in tab turns a bug into an incident.
 - The hub listens on 127.0.0.1 only and refuses web pages: `/ext` accepts only a
   `chrome-extension://` origin, and `/rpc` requires `application/json`, a localhost `Host`, and no

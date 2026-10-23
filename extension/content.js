@@ -652,7 +652,7 @@
       if (!badgeLabel) return;
       if (document.title.startsWith(badgePrefix())) return;
       // The page wrote a new title; keep it as the base and re-prefix.
-      badgeBase = document.title;
+      badgeBase = document.title || location.hostname || "page";
       paintBadge();
     });
     badgeObserver.observe(target, { childList: true, subtree: true, characterData: true });
@@ -660,7 +660,9 @@
 
   function setBadge(label) {
     const next = String(label || "").trim() || "agent";
-    if (!badgeLabel) badgeBase = document.title;
+    // An empty title would become "Agent · ", which the browser trims to
+    // "Agent ·"; that no longer matches the prefix and got prefixed again.
+    if (!badgeLabel) badgeBase = document.title || location.hostname || "page";
     badgeLabel = next;
     paintBadge();
     watchTitle();
@@ -682,10 +684,24 @@
   // While a tab has been driven recently, poke the worker often enough to keep
   // the session alive; otherwise stay quiet.
   let lastAgentActivity = 0;
-  setInterval(() => {
+  const keepalive = setInterval(() => {
     if (Date.now() - lastAgentActivity > 5 * 60 * 1000) return;
-    chrome.runtime.sendMessage({ type: "pointer:keepalive" }).catch(() => {});
+    toWorker({ type: "pointer:keepalive" });
   }, 20000);
+
+  /**
+   * Message the service worker. After the extension is reloaded, scripts left
+   * in open tabs are orphaned and chrome.runtime throws "Extension context
+   * invalidated" synchronously; stop quietly instead of logging an error.
+   */
+  function toWorker(msg) {
+    try {
+      if (!chrome.runtime?.id) throw new Error("orphaned");
+      chrome.runtime.sendMessage(msg).catch(() => {});
+    } catch {
+      clearInterval(keepalive);
+    }
+  }
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (!msg || !String(msg.type || "").startsWith("pointer:")) return;
@@ -747,7 +763,10 @@
             scrollIntoView(el);
             await sleep(60);
             const { x, y, rect } = center(el);
-            return sendResponse({ ok: true, x, y, rect, role: roleOf(el), name: nameOf(el).slice(0, 80) });
+            return sendResponse({
+              ok: true, x, y, rect, role: roleOf(el), name: nameOf(el).slice(0, 80),
+              inputType: el.tagName === "INPUT" ? el.type : null,
+            });
           }
           case "pointer:move": {
             await move(msg.params.x, msg.params.y, msg.params);
@@ -788,6 +807,47 @@
           }
           case "pointer:wait":
             return sendResponse(await waitFor(msg.params || {}));
+          // Page-event fallbacks, used when Chrome blocks debugger input on
+          // this page. These events are untrusted, so some sites ignore them.
+          case "pointer:domclick": {
+            const el = resolve(msg.params || {});
+            const r = el.getBoundingClientRect();
+            const at = {
+              bubbles: true, cancelable: true, composed: true, view: window, button: 0,
+              clientX: r.left + r.width / 2, clientY: r.top + r.height / 2,
+            };
+            const ptr = { ...at, pointerId: 1, pointerType: "mouse", isPrimary: true };
+            el.dispatchEvent(new PointerEvent("pointerdown", ptr));
+            el.dispatchEvent(new MouseEvent("mousedown", at));
+            el.focus?.({ preventScroll: true });
+            el.dispatchEvent(new PointerEvent("pointerup", ptr));
+            el.dispatchEvent(new MouseEvent("mouseup", at));
+            sendResponse({ ok: true });
+            // Click after replying: an alert() here would block the reply.
+            setTimeout(() => el.click(), 0);
+            return;
+          }
+          case "pointer:dompress": {
+            const parts = String(msg.params?.key || "Enter").split("+");
+            const key = parts.pop();
+            const target = document.activeElement || document.body;
+            const init = {
+              key, bubbles: true, cancelable: true, composed: true,
+              code: key.length === 1 ? `Key${key.toUpperCase()}` : key,
+              ctrlKey: parts.includes("Control"), metaKey: parts.includes("Meta"),
+              altKey: parts.includes("Alt"), shiftKey: parts.includes("Shift"),
+            };
+            const proceed = target.dispatchEvent(new KeyboardEvent("keydown", init));
+            sendResponse({ ok: true });
+            setTimeout(() => {
+              // A synthetic Enter does not submit a form by itself.
+              if (proceed && key === "Enter" && target.form && target.tagName !== "TEXTAREA") {
+                target.form.requestSubmit ? target.form.requestSubmit() : target.form.submit();
+              }
+              target.dispatchEvent(new KeyboardEvent("keyup", init));
+            }, 0);
+            return;
+          }
           case "pointer:domfill": {
             const p = msg.params || {};
             const el = p.ref ? findByRef(p.ref) : find(p.selector);
@@ -818,12 +878,17 @@
   });
 
   // Escape stops the agent; a real (trusted) pointer press means the human took over.
+  // Both count only in a tab the agent is driving, while the human can see it:
+  // this script runs on every page, and Escape in an unrelated tab (leaving a
+  // YouTube fullscreen, closing a Facebook popup) must not stop the agent.
+  const humanCanSeeAgentTab = () => Boolean(badgeLabel) && document.visibilityState === "visible";
+
   window.addEventListener(
     "keydown",
     (e) => {
       // The agent's own `press Escape` is trusted too; ignore it like its clicks.
-      if (e.key === "Escape" && e.isTrusted && Date.now() >= agentWindowUntil) {
-        chrome.runtime.sendMessage({ type: "pointer:stop", reason: "escape" }).catch(() => {});
+      if (e.key === "Escape" && e.isTrusted && humanCanSeeAgentTab() && Date.now() >= agentWindowUntil) {
+        toWorker({ type: "pointer:stop", reason: "escape" });
         hide();
       }
     },
@@ -832,9 +897,9 @@
   window.addEventListener(
     "pointerdown",
     (e) => {
-      if (!e.isTrusted || !ui.shown) return;
+      if (!e.isTrusted || !ui.shown || !humanCanSeeAgentTab()) return;
       if (Date.now() < agentWindowUntil) return; // it was the agent's own click
-      chrome.runtime.sendMessage({ type: "pointer:stop", reason: "takeover" }).catch(() => {});
+      toWorker({ type: "pointer:stop", reason: "takeover" });
       hide();
     },
     true
