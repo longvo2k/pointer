@@ -4,7 +4,7 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
 import WebSocket from "ws";
-import { Hub } from "../lib/hub.mjs";
+import { Hub, unpackedExtensionId } from "../lib/hub.mjs";
 
 const EXT_ORIGIN = "chrome-extension://" + "a".repeat(32);
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -17,6 +17,7 @@ function request(path, { method = "GET", headers = {}, body } = {}) {
       res.on("data", (c) => (data += c));
       res.on("end", () => resolve({ status: res.statusCode, body: data }));
     });
+    req.on("error", (err) => resolve({ status: 0, body: String(err.code || err) }));
     if (body) req.write(body);
     req.end();
   });
@@ -44,7 +45,7 @@ async function fakeBrowser(name, { focusedAt = 0, build = "1.0.0" } = {}) {
 
 let hub;
 before(async () => {
-  hub = await new Hub({ port, followIdleMs: 300 }).start();
+  hub = await new Hub({ port, followIdleMs: 300, extensionIds: ["a".repeat(32)] }).start();
 });
 after(async () => {
   await hub.stop();
@@ -145,4 +146,59 @@ test("new tasks follow the focused profile, running tasks never switch", async (
   A.ws.close();
   B.ws.close();
   await wait(100);
+});
+
+test("an extension that is not Pointer cannot connect", async () => {
+  await assert.rejects(connect("chrome-extension://" + "b".repeat(32)));
+  assert.equal((await hub.health()).rejectedExtension, "b".repeat(32), "status can explain the refusal");
+});
+
+test("an unpacked extension id is derived from its folder path", () => {
+  const id = unpackedExtensionId("/Users/ada/pointer/extension");
+  assert.match(id, /^[a-p]{32}$/);
+  assert.equal(id, unpackedExtensionId("/Users/ada/pointer/extension"));
+  assert.notEqual(id, unpackedExtensionId("/Users/ada/other/extension"));
+});
+
+test("a reply only counts from the connection the request went to", async () => {
+  const real = await connect();
+  real.send(JSON.stringify({ event: "hello", instanceId: "reply-real", version: "1", build: "1", lastFocusedAt: Date.now() }));
+  real.on("message", (raw) => {
+    const m = JSON.parse(raw);
+    if (m.id) setTimeout(() => real.send(JSON.stringify({ id: m.id, ok: true, result: "real" })), 80);
+  });
+  const other = await connect();
+  other.send(JSON.stringify({ event: "hello", instanceId: "reply-other", version: "1", build: "1" }));
+  await wait(50);
+  hub.pinned = false;
+  hub.activeId = hub.listExtensions().find((e) => e.instanceId === "reply-real").id;
+  const pending = hub.call("page.text", {});
+  await wait(20);
+  for (let id = 1; id < hub.nextId; id++) other.send(JSON.stringify({ id, ok: true, result: "forged" }));
+  assert.equal(await pending, "real");
+  real.close();
+  other.close();
+  await wait(100);
+});
+
+test("a focus time from the future does not take over", async () => {
+  const A = await fakeBrowser("future-A", { focusedAt: Date.now() - 1000 });
+  const B = await fakeBrowser("future-B");
+  B.ws.send(JSON.stringify({ event: "focus", at: 9e15 }));
+  await wait(30);
+  const b = hub.listExtensions().find((e) => e.instanceId === "future-B");
+  assert.ok(b.lastFocusedAt <= Date.now(), "focus time is clamped to now");
+  A.ws.close();
+  B.ws.close();
+  await wait(100);
+});
+
+test("rpc refuses an oversized body", async () => {
+  const body = JSON.stringify({ method: "ext.list", pad: "x".repeat(2 * 1024 * 1024) });
+  const res = await request("/rpc", {
+    method: "POST",
+    headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body) },
+    body,
+  });
+  assert.equal(res.status, 413);
 });

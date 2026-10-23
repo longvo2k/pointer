@@ -143,6 +143,7 @@ Never guess a CSS selector when a ref exists.
 | Debug the page: console errors | `console` (level, reload) | `console [errors\|all] [--reload]` |
 | Debug the page: requests, failures, bodies | `network` (filter, failed, body) | `network [text] [--failed] [--body id]` |
 | Hide the pointer and stand down | `stop` | `stop` |
+| Continue after the human stopped you (only once they agree) | `resume` | `resume` |
 
 Notes that save a round trip:
 
@@ -174,10 +175,12 @@ The tool makes actions easy. Judgment is still yours.
   type them. Ask the human to complete that step in the tab, then continue.
 - **Dismiss consent banners only when they block the task**, and say so in your report. Do not opt
   into marketing or data-sharing on their behalf.
-- **Respect the stop signal.** If a tool returns `Stopped by the human` or the user interrupted with
-  Escape or a real click, do not retry. Stop, summarize what happened, and ask how to proceed.
-  Retrying after a takeover is the quickest way to lose trust.
-- **Clean up.** Close the tabs you opened with `tab_close` (`all: true`) when the task is done, unless
+- **Respect the stop signal.** If a tool returns `Stopped by the human`, every action stays refused
+  until you call `resume`. Stop, summarize what happened, and ask how to proceed. Call `resume`
+  (`./scripts/pointer resume`) only after the human says you may continue; never to get past a stop
+  on your own.
+- **Clean up.** Close the tabs you opened with `tab_close` (`all: true`) when the task is done (it never
+  closes the human's own tabs), unless
   the human wants to keep them. Don't open a fresh tab to retry something that failed; fix the cause.
 - **If a result carries the "sent as page events" note,** another extension (often a password
   manager) is blocking Chrome's input driver on that page. Check the change report; if nothing
@@ -209,7 +212,7 @@ of an error.
 | `Unknown ref e12` | Stale ref: the page changed, navigated, or you snapshotted again | `snap`, then act on the new ref |
 | `Cannot reach this page` | `chrome://`, the Web Store, or a PDF viewer | These are blocked to extensions; ask for a normal http(s) URL |
 | `Could not attach input driver` / `Another debugger is already attached` | DevTools is open on that tab | Ask the human to close DevTools for that tab, then retry once |
-| `Stopped by the human` | Escape or a real click during an action | Stop and ask; do not retry |
+| `Stopped by the human` | Escape, the shortcut, the popup, or a real click | Stop and ask; `resume` only after they agree |
 | `Timed out after 30000ms` | Slow navigation or the tab went away | `snap` to see current state before retrying |
 | Badge says **on**, calls fail | Service worker restarted | Retry once; it reconnects in ~30s |
 

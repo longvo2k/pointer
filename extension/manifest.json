@@ -45,5 +45,14 @@
       "16": "icons/icon16.png",
       "32": "icons/icon32.png"
     }
+  },
+  "commands": {
+    "stop-agent": {
+      "suggested_key": {
+        "default": "Alt+Shift+S",
+        "mac": "Alt+Shift+S"
+      },
+      "description": "Stop the agent (works even if the page blocks Escape)"
+    }
   }
 }

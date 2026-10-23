@@ -22,6 +22,29 @@ const attached = new Set();
 const markedTabs = new Set();
 const openedTabs = new Set(); // tabs tab_open created; tab_close may close these
 const viewports = new Map(); // tabId -> emulated screen size, reapplied if the debugger reattaches
+
+// The human's stop, the agent's own tabs and emulated sizes must survive the
+// service worker being suspended, so they live in session storage too.
+const restored = chrome.storage.session
+  .get(["pointerStopped", "pointerOpenedTabs", "pointerViewports"])
+  .then((v) => {
+    stopped = stopped || Boolean(v.pointerStopped);
+    for (const id of v.pointerOpenedTabs || []) openedTabs.add(Number(id));
+    for (const [id, size] of Object.entries(v.pointerViewports || {})) {
+      if (!viewports.has(Number(id))) viewports.set(Number(id), size);
+    }
+  })
+  .catch(() => {});
+
+function saveState() {
+  chrome.storage.session
+    .set({
+      pointerStopped: stopped,
+      pointerOpenedTabs: [...openedTabs],
+      pointerViewports: Object.fromEntries(viewports),
+    })
+    .catch(() => {});
+}
 const agentGroups = new Map(); // windowId -> Chrome tab group id
 let modifier = "Meta"; // set from platform info
 
@@ -102,7 +125,11 @@ function connect() {
     } catch {
       return;
     }
-    if (!msg || !msg.id || !msg.method) return;
+    if (!msg || !msg.id) return;
+    if (typeof msg.method !== "string") {
+      sendOn({ id: msg.id, ok: false, error: "Malformed command: method is missing" });
+      return;
+    }
     const started = Date.now();
     try {
       const result = await dispatch(msg.method, msg.params || {});
@@ -179,12 +206,28 @@ chrome.runtime.onInstalled.addListener(connect);
 connect();
 
 // --------------------------------------------------------------- messaging ---
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (!msg) return;
+/**
+ * The human stopped the agent (Escape, a click in its tab, the popup, or the
+ * keyboard shortcut). The stop holds until the agent calls resume, which it
+ * should do only after the human agrees.
+ */
+function stopAgent(reason) {
+  stopped = true;
+  saveState();
+  unmarkTabs().catch(() => {});
+  send({ event: "stop", reason: reason || "user" });
+}
+
+// A shortcut is handled by Chrome itself, so a page cannot swallow it the way
+// it can swallow Escape.
+chrome.commands?.onCommand.addListener((command) => {
+  if (command === "stop-agent") stopAgent("shortcut");
+});
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!msg || sender?.id !== chrome.runtime.id) return;
   if (msg.type === "pointer:stop") {
-    stopped = true;
-    unmarkTabs().catch(() => {});
-    send({ event: "stop", reason: msg.reason || "user" });
+    stopAgent(msg.reason);
     sendResponse({ ok: true });
     return;
   }
@@ -525,6 +568,7 @@ function forgetTab(tabId, { keepMarks = false } = {}) {
   captures.delete(tabId);
   if (!keepMarks) markedTabs.delete(tabId);
   if (!keepMarks) viewports.delete(tabId);
+  if (!keepMarks) saveState();
 }
 
 /**
@@ -535,7 +579,7 @@ function forgetTab(tabId, { keepMarks = false } = {}) {
 const PICKER_INPUTS = new Set(["date", "time", "datetime-local", "month", "week", "color", "range"]);
 
 function debuggerBlocked(err) {
-  return /chrome-extension:\/\/ URL of different extension|Cannot access a chrome-extension/i.test(
+  return /chrome-extension:\/\/ URL of different extension|Cannot access a chrome-extension|Detached while handling command/i.test(
     String(err?.message || err)
   );
 }
@@ -552,7 +596,13 @@ function watchDialog(tabId) {
   const set = dialogWaiters.get(tabId) ?? new Set();
   dialogWaiters.set(tabId, set);
   set.add(resolve);
-  return { promise, cancel: () => set.delete(resolve) };
+  return {
+    promise,
+    cancel: () => {
+      set.delete(resolve);
+      if (!set.size && dialogWaiters.get(tabId) === set) dialogWaiters.delete(tabId);
+    },
+  };
 }
 
 /** Run input work, but return early if it opens a dialog. */
@@ -637,7 +687,13 @@ function nextEvent(tabId, method) {
   const set = eventWaiters.get(key) ?? new Set();
   eventWaiters.set(key, set);
   set.add(resolve);
-  return { promise, cancel: () => set.delete(resolve) };
+  return {
+    promise,
+    cancel: () => {
+      set.delete(resolve);
+      if (!set.size && eventWaiters.get(key) === set) eventWaiters.delete(key);
+    },
+  };
 }
 
 chrome.debugger.onEvent.addListener((source, method, p) => {
@@ -647,6 +703,7 @@ chrome.debugger.onEvent.addListener((source, method, p) => {
   if (waiting?.size) {
     for (const resolve of waiting) resolve(p);
     waiting.clear();
+    eventWaiters.delete(`${tabId}:${method}`);
   }
   switch (method) {
     case "Page.javascriptDialogOpening": {
@@ -727,6 +784,7 @@ chrome.tabs.onUpdated.addListener((tabId, info) => {
 });
 
 async function cdp(tabId, method, params) {
+  if (stopped && method.startsWith("Input.")) throw new Error(STOP_MESSAGE);
   await attach(tabId);
   const started = Date.now();
   try {
@@ -771,7 +829,28 @@ async function setFocusEmulation(tabId, enabled) {
  * Run an input action with focus emulation when the tab is in the background.
  * The tab itself never becomes active, so the human stays where they are.
  */
+const tabLocks = new Map(); // tabId -> promise of the input work in progress
+
+/** Input on one tab runs one call at a time, so mouse and key events never interleave. */
+async function withTabLock(tabId, fn) {
+  const prev = tabLocks.get(tabId) || Promise.resolve();
+  let release;
+  const mine = prev.then(() => new Promise((r) => (release = r)));
+  tabLocks.set(tabId, mine);
+  await prev;
+  try {
+    return await fn();
+  } finally {
+    release();
+    if (tabLocks.get(tabId) === mine) tabLocks.delete(tabId);
+  }
+}
+
 async function withBackgroundInput(tab, fn) {
+  return withTabLock(tab.id, () => backgroundInput(tab, fn));
+}
+
+async function backgroundInput(tab, fn) {
   const background = !tab.active;
   if (background) await setFocusEmulation(tab.id, true);
   try {
@@ -947,14 +1026,45 @@ async function collectChanges(tabId, docId, opts = {}) {
 }
 
 // ----------------------------------------------------------------- dispatch --
+const STOP_MESSAGE =
+  "Stopped by the human. Ask them before continuing; once they agree, call resume.";
+
+/** The stop holds until resume: every refused call says so, not just the first. */
 function assertNotStopped() {
-  if (stopped) {
-    stopped = false;
-    throw new Error("Stopped by the human. Ask before continuing.");
+  if (stopped) throw new Error(STOP_MESSAGE);
+}
+
+/** Only web pages and a blank tab: no file://, chrome://, data: or javascript:. */
+function assertWebUrl(url) {
+  if (url === "about:blank") return;
+  let u;
+  try {
+    u = new URL(url);
+  } catch {
+    throw new Error(`Not a valid URL: ${url}`);
+  }
+  if (u.protocol !== "http:" && u.protocol !== "https:") {
+    throw new Error(`Pointer opens only http and https pages, not ${u.protocol}`);
+  }
+}
+
+const SECRET_FILE =
+  /^(id_(rsa|dsa|ecdsa|ed25519)(\.pub)?|.*\.(pem|key|p12|pfx|kdbx|keychain|keychain-db|gpg|asc)|credentials(\.json)?|.*secret.*|.*\.env|\.env.*)$/i;
+
+/** Refuse hidden files and anything that looks like a key or credential. */
+function assertUploadable(file) {
+  const parts = String(file).split(/[\\/]+/).filter(Boolean);
+  const name = parts[parts.length - 1] || "";
+  if (parts.some((p) => p.startsWith(".")) || SECRET_FILE.test(name)) {
+    throw new Error(
+      `Pointer will not upload ${name}: it is a hidden file or looks like a key or credential. ` +
+        "If the human really means it, they can attach it themselves."
+    );
   }
 }
 
 async function dispatch(method, params) {
+  await restored;
   const requestedAgent = String(params?.agent || "").trim();
   if (requestedAgent && requestedAgent !== agentName) {
     agentName = requestedAgent;
@@ -994,12 +1104,15 @@ async function dispatch(method, params) {
     }
 
     case "tabs.open": {
+      assertNotStopped();
+      assertWebUrl(params.url || "about:blank");
       // Open in the background, like Claude in Chrome: the human stays on the
       // tab and window (or profile) they are using. Only an explicit
       // focus: true brings the new tab forward.
       const tab = await openBackgroundTab(params.url || "about:blank");
       lastTabId = tab.id;
       openedTabs.add(tab.id);
+      saveState();
       // Group it now so the human can spot it; the title badge follows on load.
       markedTabs.add(tab.id);
       await ensureAgentGroup(tab.id).catch(() => {});
@@ -1013,6 +1126,7 @@ async function dispatch(method, params) {
     }
 
     case "tabs.focus": {
+      assertNotStopped();
       const tab = await chrome.tabs.get(params.tabId ?? lastTabId);
       lastTabId = tab.id;
       await prepareTab(tab, { bringToFront: true, focusWindow: params.focusWindow !== false });
@@ -1021,12 +1135,13 @@ async function dispatch(method, params) {
     }
 
     case "tabs.close": {
-      // Only tabs the agent opened or worked in: never the human's other tabs.
-      const ids = params.all ? [...new Set([...openedTabs, ...markedTabs])] : [Number(params.tabId ?? lastTabId)];
+      // Only tabs the agent opened. A tab the human handed over (tab_select,
+      // or the page they were on) is theirs: the agent never closes it.
+      const ids = params.all ? [...openedTabs] : [Number(params.tabId ?? lastTabId)];
       const closed = [];
       for (const id of ids) {
-        if (!openedTabs.has(id) && !markedTabs.has(id)) {
-          if (!params.all) throw new Error(`Tab ${id} is not one the agent opened or used; ask the human to close it.`);
+        if (!openedTabs.has(id)) {
+          if (!params.all) throw new Error(`Tab ${id} was not opened by the agent; ask the human to close it.`);
           continue;
         }
         await chrome.tabs.remove(id).catch(() => {});
@@ -1035,10 +1150,15 @@ async function dispatch(method, params) {
         if (lastTabId === id) lastTabId = null;
         closed.push(id);
       }
+      saveState();
+      // The human's own tabs the agent worked in lose the badge and group.
+      if (params.all) await unmarkTabs().catch(() => {});
       return { closed };
     }
 
     case "page.navigate": {
+      assertNotStopped();
+      assertWebUrl(String(params.url || ""));
       const tab = await resolveTab(params);
       lastTabId = tab.id;
       assertNoDialog(tab.id);
@@ -1231,6 +1351,7 @@ async function dispatch(method, params) {
     }
 
     case "page.dialog": {
+      assertNotStopped();
       const tab = await resolveTab(params);
       const open = dialogs.get(tab.id);
       try {
@@ -1255,6 +1376,7 @@ async function dispatch(method, params) {
       await markTab(tab.id);
       const files = (params.paths || []).map(String);
       if (!files.length) throw new Error("Pass at least one file path.");
+      files.forEach(assertUploadable);
       return await withBackgroundInput(tab, async () => {
         const target = await page(tab.id, "pointer:file-input", params);
         if (target.chooser) return await uploadThroughChooser(tab, target, files);
@@ -1300,6 +1422,7 @@ async function dispatch(method, params) {
     case "page.console":
     case "page.network": {
       const kind = method === "page.console" ? "console" : "network";
+      if (params.reload) assertNotStopped();
       const tab = await resolveTab(params);
       lastTabId = tab.id;
       const started = await startCapture(tab.id, kind);
@@ -1369,17 +1492,42 @@ async function dispatch(method, params) {
         }
       }
       if (!dataUrl) {
-        const res = await cdp(fresh.id, "Page.captureScreenshot", {
-          format,
-          quality: format === "jpeg" ? params.quality : undefined,
-        });
-        dataUrl = `data:image/${format === "jpeg" ? "jpeg" : "png"};base64,${res.data}`;
-        trace("shot via cdp");
+        try {
+          const res = await cdp(fresh.id, "Page.captureScreenshot", {
+            format,
+            quality: format === "jpeg" ? params.quality : undefined,
+          });
+          dataUrl = `data:image/${format === "jpeg" ? "jpeg" : "png"};base64,${res.data}`;
+          trace("shot via cdp");
+        } catch (err) {
+          if (!debuggerBlocked(err)) throw err;
+          // Another extension's frame (a password manager popup) blocks CDP.
+          // If the tab is the visible one in its window, the window capture works.
+          if (fresh.active && win?.state !== "minimized" && !viewports.has(fresh.id)) {
+            dataUrl = await withTimeout(
+              chrome.tabs.captureVisibleTab(fresh.windowId, { format, quality: params.quality }),
+              6000,
+              "Screenshot timed out (window hidden or occluded)."
+            );
+          } else {
+            throw new Error(
+              "Chrome blocks screenshots of this background tab because another extension's frame (often a password " +
+                "manager popup) is on the page. Ask the human to close that popup, or bring the tab forward with tab_focus."
+            );
+          }
+        }
       }
       return { dataUrl, tabId: tab.id, url: tab.url };
     }
 
     case "page.viewport": {
+      assertNotStopped();
+      if (!params.reset) {
+        for (const k of ["width", "height"]) {
+          const n = Number(params[k]);
+          if (!Number.isInteger(n) || n < 200 || n > 4000) throw new Error(`${k} must be a whole number from 200 to 4000.`);
+        }
+      }
       const tab = await resolveTab(params);
       lastTabId = tab.id;
       assertNoDialog(tab.id);
@@ -1411,6 +1559,7 @@ async function dispatch(method, params) {
       }
       if (size) viewports.set(tab.id, size);
       else viewports.delete(tab.id);
+      saveState();
       const snap = await page(tab.id, "pointer:snapshot", { scope: "viewport" });
       const fresh = await chrome.tabs.get(tab.id);
       return { tabId: tab.id, url: fresh.url, snapshot: snap.text };
@@ -1429,9 +1578,19 @@ async function dispatch(method, params) {
       return { agentName, groups: await groupSummary() };
 
     case "ext.reload":
+      // A reload clears session storage, and with it a pending stop.
+      assertNotStopped();
       // Pick up edited unpacked files without asking the human to click reload.
       setTimeout(() => chrome.runtime.reload(), 200);
       return { reloading: true };
+
+    case "ext.resume": {
+      // The agent asked the human and they agreed to continue.
+      const was = stopped;
+      stopped = false;
+      saveState();
+      return { resumed: was };
+    }
 
     default:
       throw new Error(`Unknown method ${method}`);

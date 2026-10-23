@@ -79,3 +79,41 @@ test("the viewport tool sends the size and reports the new view", async () => {
   assert.deepEqual(calls[1][1], { reset: true });
   assert.match(reset.text, /^viewport reset/);
 });
+
+test("only web pages can be opened", () => {
+  for (const bad of ["file:///etc/passwd", "chrome://settings", "javascript:alert(1)", "data:text/html,hi"]) {
+    assert.throws(() => normalizeUrl(bad), /http and https/, bad);
+  }
+  assert.equal(normalizeUrl("HTTPS://example.com"), "HTTPS://example.com");
+  assert.equal(normalizeUrl("localhost:3000/app"), "http://localhost:3000/app");
+  assert.equal(normalizeUrl("example.com:8443/x"), "https://example.com:8443/x");
+});
+
+test("resume asks the extension to continue after a human stop", async () => {
+  const calls = [];
+  const hub = { call: async (method) => (calls.push(method), { resumed: true }) };
+  const out = await callTool(hub, "resume", {});
+  assert.deepEqual(calls, ["ext.resume"]);
+  assert.match(out.text, /resumed/);
+  assert.match(TOOLS.find((t) => t.name === "resume").description, /human/i);
+});
+
+test("upload refuses keys, credentials, and hidden files", async () => {
+  const hub = { call: async () => assert.fail("must not reach the browser") };
+  for (const p of ["~/.ssh/id_rsa", "/tmp/project/.env", "/tmp/server.pem", "/tmp/aws/credentials", "/tmp/x/.config/token.txt"]) {
+    await assert.rejects(callTool(hub, "upload", { paths: [p] }), /will not upload/, p);
+  }
+});
+
+test("urls in tool output lose tokens and the fragment", async () => {
+  const hub = {
+    call: async () => ({
+      target: { role: "button", name: "Go" },
+      url: "https://app.example.com/cb?code=abc123&state=xyz&page=2#access_token=secret",
+      changes: { added: [], removed: [], changed: [], more: 0 },
+    }),
+  };
+  const out = await callTool(hub, "click", { ref: "e1" });
+  assert.doesNotMatch(out.text, /abc123|secret/);
+  assert.match(out.text, /state=xyz&page=2/);
+});
