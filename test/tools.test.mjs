@@ -1,7 +1,7 @@
 // The tool layer: argument handling and the text agents read.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { TOOLS, normalizeUrl, formatChanges } from "../lib/tools.mjs";
+import { TOOLS, normalizeUrl, formatChanges, resolveViewport, callTool } from "../lib/tools.mjs";
 
 test("bare domains become https URLs; schemes are kept", () => {
   assert.equal(normalizeUrl("example.com"), "https://example.com");
@@ -44,4 +44,38 @@ test("a navigation shows the new view instead of a diff", () => {
 
 test("no change is said plainly", () => {
   assert.equal(formatChanges({ added: [], removed: [], changed: [], more: 0 }), "\nno change in view");
+});
+
+test("viewport presets emulate phone, tablet, and desktop sizes", () => {
+  assert.deepEqual(resolveViewport({ preset: "mobile" }), { width: 375, height: 812, deviceScaleFactor: 3, mobile: true, label: "mobile" });
+  assert.equal(resolveViewport({ preset: "tablet" }).width, 768);
+  assert.equal(resolveViewport({ preset: "desktop" }).mobile, false);
+  assert.equal(resolveViewport({ preset: "tablet", mobile: false }).mobile, false);
+  assert.deepEqual(resolveViewport({ preset: "reset" }), { reset: true });
+});
+
+test("a custom viewport needs whole-number sizes in range", () => {
+  assert.deepEqual(resolveViewport({ width: 390, height: 844, mobile: true }), {
+    width: 390, height: 844, deviceScaleFactor: 2, mobile: true, label: "custom",
+  });
+  assert.equal(resolveViewport({ width: "1024", height: "768" }).mobile, false);
+  assert.throws(() => resolveViewport({}), /preset/);
+  assert.throws(() => resolveViewport({ width: 390 }), /height/);
+  assert.throws(() => resolveViewport({ width: 100, height: 800 }), /200 to 4000/);
+  assert.throws(() => resolveViewport({ width: 390.5, height: 800 }), /whole number/);
+  assert.throws(() => resolveViewport({ preset: "watch" }), /Unknown preset/);
+  assert.throws(() => resolveViewport({ preset: "mobile", width: 400, height: 800 }), /not both/);
+});
+
+test("the viewport tool sends the size and reports the new view", async () => {
+  const calls = [];
+  const hub = { call: async (method, params) => (calls.push([method, params]), { url: "https://example.com/", snapshot: "- link \"Menu\" [ref=e1]" }) };
+  const out = await callTool(hub, "viewport", { preset: "mobile" });
+  assert.equal(calls[0][0], "page.viewport");
+  assert.equal(calls[0][1].width, 375);
+  assert.match(out.text, /^viewport 375x812 \(mobile, touch\) → https:\/\/example.com\//);
+  assert.match(out.text, /link "Menu" \[ref=e1\]/);
+  const reset = await callTool(hub, "viewport", { preset: "reset" });
+  assert.deepEqual(calls[1][1], { reset: true });
+  assert.match(reset.text, /^viewport reset/);
 });

@@ -137,6 +137,7 @@ Never guess a CSS selector when a ref exists.
 | Read prose without HTML | `read_text` | `text` |
 | Wait for text, a selector, or time | `wait_for` | `wait <text\|ms>` |
 | Show the human the current state | `screenshot` | `shot <path.png>` |
+| Check a responsive layout | `viewport` (mobile, tablet, desktop, reset, or width + height) | `viewport <preset\|W H>` |
 | Answer an alert / confirm / prompt | `dialog` (accept or dismiss, optional text) | `dialog accept\|dismiss [text]` |
 | Attach files to an upload field | `upload` (ref, paths) | `upload [ref] <file...>` |
 | Debug the page: console errors | `console` (level, reload) | `console [errors\|all] [--reload]` |
@@ -150,6 +151,9 @@ Notes that save a round trip:
 - `wait_for` is cheaper than polling with repeated snapshots after a click that loads data.
 - `screenshot` captures the agent's tab, including the pointer label, even when the human is on
   another tab. Use it when layout or visual state matters; use `snapshot` when you need to act.
+- `viewport` changes the screen size of your tab only, never the human's window. For a responsive
+  check, go through `mobile`, `tablet`, `desktop`, taking a `screenshot` or reading the returned view
+  at each, then `viewport reset`. Closing the tab also clears it.
 - Actions do not bring the agent's tab to the front. If you need the human to watch, call
   `tab_focus` first; otherwise leave them where they are.
 - Prefer MCP tools when they are registered. The CLI is the same bridge, so mixing them in one task
