@@ -63,7 +63,7 @@ async function handle(msg) {
     return reply(id, {
       protocolVersion: params?.protocolVersion || "2025-06-18",
       capabilities: { tools: {} },
-      serverInfo: { name: "pointer", title: "Pointer", version: "0.2.10" },
+      serverInfo: { name: "pointer", title: "Pointer", version: "0.2.12" },
       instructions:
         "Drives the human's real Chrome tab with a visible pointer. Snapshot first, act by ref. " +
         "The human can stop you with Escape or by clicking; respect that and ask before resuming.",

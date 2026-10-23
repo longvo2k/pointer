@@ -342,12 +342,21 @@
     "a[href],button,input,select,textarea,summary,label,[role=button],[role=link],[role=tab]," +
     "[role=menuitem],[role=option],[role=checkbox],[role=radio],[role=switch],[role=combobox]";
 
+  // Status messages ("Saved", "Invite link copied", form errors) are not
+  // clickable, but an agent needs them to know an action worked.
+  const LIVE = '[role="status"],[role="alert"],[aria-live]:not([aria-live="off"])';
+
   /** { role, name } for an element worth listing, or null. */
   function describe(el) {
     // tagName is lowercase for SVG elements, so compare in upper case.
     const tag = el.tagName.toUpperCase();
     if (SKIP_TAGS.has(tag)) return null;
     if (!isVisible(el)) return null;
+    if (el.matches(LIVE)) {
+      const text = (el.innerText || "").replace(/\s+/g, " ").trim();
+      if (!text) return null;
+      return { role: el.getAttribute("role") === "alert" ? "alert" : "status", name: text.slice(0, 160) };
+    }
 
     // Every element with pointer affordance, plus the semantic candidates.
     // A plain div-based tab has no role and no tag we can key on, but the page
@@ -406,6 +415,11 @@
       if (el.placeholder && !name) line += ` placeholder="${el.placeholder.slice(0, 60)}"`;
     }
     if (el.type === "checkbox" || el.type === "radio") line += el.checked ? " checked" : "";
+    // Custom widgets (a div with role="radio", a tab, a toggle button) carry
+    // their state in ARIA; without it a change report misses the selection.
+    else if (el.getAttribute("aria-checked") === "true") line += " checked";
+    if (el.getAttribute("aria-selected") === "true") line += " selected";
+    if (el.getAttribute("aria-pressed") === "true") line += " pressed";
     if (el.disabled || el.getAttribute("aria-disabled") === "true") line += " disabled";
     if ((el.type === "file" && el.tagName === "INPUT") || el.control?.type === "file") line += " upload";
     if (el.getAttribute("aria-expanded") === "true") line += " expanded";
