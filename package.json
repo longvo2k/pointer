@@ -11,9 +11,14 @@
   },
   "scripts": {
     "serve": "node bin/pointer.mjs serve",
-    "mcp": "node bin/mcp.mjs"
+    "mcp": "node bin/mcp.mjs",
+    "test": "node --test",
+    "check": "node -e \"for (const f of require('fs').readdirSync('extension').filter(f=>f.endsWith('.js'))) require('child_process').execFileSync(process.execPath,['--check','extension/'+f])\" && node --check bin/pointer.mjs && node --check bin/mcp.mjs && node --check lib/hub.mjs && node --check lib/tools.mjs"
   },
   "dependencies": {
     "ws": "^8.18.0"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }
