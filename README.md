@@ -197,7 +197,7 @@ the only place that knows which browser and tab is active.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `POINTER_PORT` | `8790` | hub port (extension connects here) |
+| `POINTER_PORT` | `8790` | hub port. The extension always connects to 8790, so change `DEFAULT_PORT` in `extension/background.js` to match |
 | `POINTER_FOCUS_WINDOW` | `1` | raise the OS window for `tab_open` / `tab_focus` (other actions never steal focus) |
 | `POINTER_AGENT` | `agent` | name shown in status and the tab-title badge (`Claude · PAVE Inspect`) |
 

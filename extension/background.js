@@ -30,7 +30,7 @@ const GROUP_TITLE_MAX = 24;
 
 // Toggle when hunting a slow command; logs go to the extension worker console.
 const TRACE = false;
-const BUILD = "0.2.2";
+const BUILD = "0.2.3";
 const traceStart = Date.now();
 self.__pointerBuild = BUILD;
 function trace(...args) {
@@ -497,6 +497,11 @@ async function pressKey(tabId, combo) {
     text: keyName.length === 1 ? keyName : undefined,
   };
 
+  // CDP key events don't trigger the OS editing shortcuts (⌘A on macOS does
+  // nothing), so name the editing command explicitly.
+  const primary = modifiers & (modifier === "Meta" ? 4 : 2);
+  const commands = primary && keyName.toLowerCase() === "a" ? ["selectAll"] : undefined;
+
   await cdp(tabId, "Input.dispatchKeyEvent", {
     type: spec.text ? "keyDown" : "rawKeyDown",
     modifiers,
@@ -505,6 +510,7 @@ async function pressKey(tabId, combo) {
     windowsVirtualKeyCode: spec.keyCode,
     nativeVirtualKeyCode: spec.keyCode,
     text: modifiers ? undefined : spec.text,
+    commands,
   });
   await cdp(tabId, "Input.dispatchKeyEvent", {
     type: "keyUp",
@@ -602,9 +608,11 @@ async function dispatch(method, params) {
       const tab = await chrome.tabs.create({ url: params.url || "about:blank", active: true });
       lastTabId = tab.id;
       lastFocusedTab = tab.id;
-      try {
-        await chrome.windows.update(tab.windowId, { focused: true });
-      } catch {}
+      if (params.focusWindow !== false) {
+        try {
+          await chrome.windows.update(tab.windowId, { focused: true });
+        } catch {}
+      }
       await waitForLoad(tab.id);
       await markTab(tab.id);
       return { tabId: tab.id, url: tab.url || params.url };

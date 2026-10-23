@@ -336,7 +336,8 @@
     for (const el of document.querySelectorAll("body *")) {
       if (++scanned > 12000) break;
       if (seen.has(el)) continue;
-      const tag = el.tagName;
+      // tagName is lowercase for SVG elements, so compare in upper case.
+      const tag = el.tagName.toUpperCase();
       if (tag === "SCRIPT" || tag === "STYLE" || tag === "NOSCRIPT" || tag === "TEMPLATE" || tag === "SVG") continue;
       if (!isVisible(el)) continue;
 
@@ -621,7 +622,8 @@
   window.addEventListener(
     "keydown",
     (e) => {
-      if (e.key === "Escape" && e.isTrusted) {
+      // The agent's own `press Escape` is trusted too; ignore it like its clicks.
+      if (e.key === "Escape" && e.isTrusted && Date.now() >= agentWindowUntil) {
         chrome.runtime.sendMessage({ type: "pointer:stop", reason: "escape" }).catch(() => {});
         hide();
       }
