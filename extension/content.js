@@ -732,11 +732,11 @@
             const el = p.ref || p.selector ? resolve(p) : null;
             const input = fileInputFor(el);
             if (!input) {
-              throw new Error(
-                el
-                  ? "No file input belongs to that element. Pass the ref of the upload button or field."
-                  : "This page has no file input."
-              );
+              if (!el) throw new Error("This page has no file input. Pass the ref of the upload button.");
+              // Many sites create the file input only when their button is
+              // clicked; the worker clicks it and catches the file picker.
+              scrollIntoView(el);
+              return sendResponse({ ok: true, chooser: true, name: nameOf(el).slice(0, 80) || "upload button", ...center(el) });
             }
             document.querySelectorAll("[data-pointer-upload]").forEach((n) => n.removeAttribute("data-pointer-upload"));
             input.setAttribute("data-pointer-upload", "1");

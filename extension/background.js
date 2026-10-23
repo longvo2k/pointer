@@ -31,7 +31,7 @@ const GROUP_TITLE_MAX = 24;
 
 // Toggle when hunting a slow command; logs go to the extension worker console.
 const TRACE = false;
-const BUILD = "0.2.9";
+const BUILD = "0.2.10";
 const traceStart = Date.now();
 self.__pointerBuild = BUILD;
 function trace(...args) {
@@ -604,9 +604,27 @@ function where(frame) {
   return ` (${file}:${(frame.lineNumber ?? 0) + 1})`;
 }
 
+const eventWaiters = new Map(); // `${tabId}:${method}` -> Set<resolve>
+
+/** Resolve with the params of the next `method` event in this tab. */
+function nextEvent(tabId, method) {
+  const key = `${tabId}:${method}`;
+  let resolve;
+  const promise = new Promise((r) => (resolve = r));
+  const set = eventWaiters.get(key) ?? new Set();
+  eventWaiters.set(key, set);
+  set.add(resolve);
+  return { promise, cancel: () => set.delete(resolve) };
+}
+
 chrome.debugger.onEvent.addListener((source, method, p) => {
   const tabId = source.tabId;
   if (tabId == null) return;
+  const waiting = eventWaiters.get(`${tabId}:${method}`);
+  if (waiting?.size) {
+    for (const resolve of waiting) resolve(p);
+    waiting.clear();
+  }
   switch (method) {
     case "Page.javascriptDialogOpening": {
       const d = { type: p.type, message: String(p.message || "").slice(0, 300), defaultPrompt: p.defaultPrompt || "", url: p.url };
@@ -833,6 +851,41 @@ async function fillAt(tabId, x, y, text, beforePress) {
   await sleep(60);
   await pressKey(tabId, `${modifier}+a`);
   await cdp(tabId, "Input.insertText", { text: String(text) });
+}
+
+/**
+ * Upload through a button that opens the file picker itself (no file input in
+ * the page until clicked). Intercept the picker so no OS dialog appears, click
+ * the button, and hand the picker's input the files.
+ */
+async function uploadThroughChooser(tab, target, files) {
+  const docId = await takeBaseline(tab.id);
+  await cdp(tab.id, "Page.enable", {});
+  await cdp(tab.id, "Page.setInterceptFileChooserDialog", { enabled: true });
+  const opened = nextEvent(tab.id, "Page.fileChooserOpened");
+  try {
+    await Promise.race([
+      page(tab.id, "pointer:act", { x: target.x, y: target.y, rect: target.rect, label: target.name, action: "upload", click: true }).catch(() => {}),
+      sleep(1200),
+    ]);
+    const markAgentInput = () => page(tab.id, "pointer:agent-window", { ms: 2000 }).catch(() => {});
+    await clickAt(tab.id, target.x, target.y, markAgentInput);
+    const chooser = await withTimeout(
+      opened.promise,
+      5000,
+      "Clicking that element did not open a file picker. Pass the ref of the upload button."
+    );
+    if (files.length > 1 && chooser.mode !== "selectMultiple") {
+      throw new Error(`This picker takes one file; ${files.length} were given.`);
+    }
+    await cdp(tab.id, "DOM.setFileInputFiles", { files, backendNodeId: chooser.backendNodeId });
+  } finally {
+    opened.cancel();
+    await cdp(tab.id, "Page.setInterceptFileChooserDialog", { enabled: false }).catch(() => {});
+  }
+  await sleep(400);
+  const changes = await collectChanges(tab.id, docId);
+  return { ok: true, target: target.name, accept: "", files: files.length, url: (await chrome.tabs.get(tab.id)).url, changes };
 }
 
 // ------------------------------------------------------------ change report --
@@ -1172,6 +1225,7 @@ async function dispatch(method, params) {
       if (!files.length) throw new Error("Pass at least one file path.");
       return await withBackgroundInput(tab, async () => {
         const target = await page(tab.id, "pointer:file-input", params);
+        if (target.chooser) return await uploadThroughChooser(tab, target, files);
         if (files.length > 1 && !target.multiple) {
           throw new Error(`This file input takes one file; ${files.length} were given.`);
         }
