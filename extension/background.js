@@ -30,7 +30,7 @@ const GROUP_TITLE_MAX = 24;
 
 // Toggle when hunting a slow command; logs go to the extension worker console.
 const TRACE = false;
-const BUILD = "0.2.5";
+const BUILD = "0.2.6";
 const traceStart = Date.now();
 self.__pointerBuild = BUILD;
 function trace(...args) {
@@ -385,9 +385,14 @@ async function ensureContent(tabId) {
 }
 
 async function page(tabId, type, params = {}) {
-  await ensureContent(tabId);
   const started = Date.now();
-  const res = await chrome.tabs.sendMessage(tabId, { type, params });
+  // A page frozen by alert()/confirm() never answers; fail fast with a hint
+  // instead of waiting for the hub's 30s timeout.
+  const res = await withTimeout(
+    ensureContent(tabId).then(() => chrome.tabs.sendMessage(tabId, { type, params })),
+    type === "pointer:wait" ? 28000 : 12000,
+    "The page did not respond. It may be busy, or a dialog (alert/confirm) may be open: try the dialog tool."
+  );
   const ms = Date.now() - started;
   if (ms > 300) trace("page slow", type, `${ms}ms`);
   if (!res) throw new Error("No response from page. It may have navigated.");
@@ -431,13 +436,175 @@ async function attach(tabId) {
     }
     attached.add(tabId);
   }
+  // Page events tell us when alert()/confirm()/prompt() opens.
+  await chrome.debugger.sendCommand({ tabId }, "Page.enable").catch(() => {});
 }
 
-chrome.debugger.onDetach.addListener(({ tabId }) => attached.delete(tabId));
-chrome.tabs.onRemoved.addListener((tabId) => {
+chrome.debugger.onDetach.addListener(({ tabId }) => forgetTab(tabId, { keepMarks: true }));
+chrome.tabs.onRemoved.addListener((tabId) => forgetTab(tabId));
+
+function forgetTab(tabId, { keepMarks = false } = {}) {
   attached.delete(tabId);
-  markedTabs.delete(tabId);
+  dialogs.delete(tabId);
+  captures.delete(tabId);
+  if (!keepMarks) markedTabs.delete(tabId);
+}
+
+// ---------------------------------------------------------------- dialogs ---
+// alert()/confirm()/prompt() block the page: content scripts stop answering
+// and the input event that opened the dialog does not return until it closes.
+const dialogs = new Map(); // tabId -> { type, message, defaultPrompt, url }
+const dialogWaiters = new Map(); // tabId -> Set<resolve>
+
+function watchDialog(tabId) {
+  let resolve;
+  const promise = new Promise((r) => (resolve = r));
+  const set = dialogWaiters.get(tabId) ?? new Set();
+  dialogWaiters.set(tabId, set);
+  set.add(resolve);
+  return { promise, cancel: () => set.delete(resolve) };
+}
+
+/** Run input work, but return early if it opens a dialog. */
+async function raceDialog(tabId, work) {
+  const watch = watchDialog(tabId);
+  try {
+    const out = await Promise.race([
+      work.then(() => ({})),
+      watch.promise.then((dialog) => ({ dialog })),
+    ]);
+    if (out.dialog) work.catch(() => {}); // it settles once the dialog closes
+    return out;
+  } finally {
+    watch.cancel();
+  }
+}
+
+function assertNoDialog(tabId) {
+  const d = dialogs.get(tabId);
+  if (d) {
+    throw new Error(
+      `${/^[aeiou]/.test(d.type) ? "An" : "A"} ${d.type} dialog is open: "${d.message}". Ask the human if it matters, then use the dialog tool to accept or dismiss it.`
+    );
+  }
+}
+
+// ---------------------------------------------------------------- capture ---
+// Console and network capture are opt-in per tab: enabling Runtime/Network
+// makes the debugger easier for anti-bot scripts to notice, so the tab keeps
+// its normal fingerprint until an agent asks for logs.
+const captures = new Map(); // tabId -> { console, logs: [], net: Map, order: [] }
+const LOG_LIMIT = 300;
+const NET_LIMIT = 400;
+
+function captureFor(tabId) {
+  let c = captures.get(tabId);
+  if (!c) {
+    c = { console: false, network: false, logs: [], net: new Map(), order: [] };
+    captures.set(tabId, c);
+  }
+  return c;
+}
+
+function pushLog(tabId, entry) {
+  const c = captures.get(tabId);
+  if (!c?.console) return;
+  c.logs.push({ at: Date.now(), ...entry });
+  if (c.logs.length > LOG_LIMIT) c.logs.splice(0, c.logs.length - LOG_LIMIT);
+}
+
+function remoteText(arg) {
+  if (!arg) return "";
+  if (arg.value !== undefined) return typeof arg.value === "string" ? arg.value : JSON.stringify(arg.value);
+  // Objects arrive as a preview of their first few properties.
+  const pv = arg.preview;
+  if (pv?.properties && arg.type === "object" && arg.subtype !== "error") {
+    const more = pv.overflow ? ", …" : "";
+    if (pv.subtype === "array") return `[${pv.properties.map((p) => p.value).join(", ")}${more}]`;
+    return `{${pv.properties.map((p) => `${p.name}: ${p.type === "string" ? JSON.stringify(p.value) : p.value}`).join(", ")}${more}}`;
+  }
+  return arg.unserializableValue || arg.description || arg.type || "";
+}
+
+function where(frame) {
+  if (!frame?.url) return "";
+  const file = frame.url.split(/[?#]/)[0].split("/").pop() || frame.url;
+  return ` (${file}:${(frame.lineNumber ?? 0) + 1})`;
+}
+
+chrome.debugger.onEvent.addListener((source, method, p) => {
+  const tabId = source.tabId;
+  if (tabId == null) return;
+  switch (method) {
+    case "Page.javascriptDialogOpening": {
+      const d = { type: p.type, message: String(p.message || "").slice(0, 300), defaultPrompt: p.defaultPrompt || "", url: p.url };
+      dialogs.set(tabId, d);
+      for (const resolve of dialogWaiters.get(tabId) ?? []) resolve(d);
+      return;
+    }
+    case "Page.javascriptDialogClosed":
+      dialogs.delete(tabId);
+      return;
+    case "Runtime.consoleAPICalled": {
+      const level = { warning: "warning", error: "error", assert: "error" }[p.type] || (p.type === "debug" ? "debug" : "log");
+      const text = (p.args || []).map(remoteText).join(" ");
+      return pushLog(tabId, { level, text: text + where(p.stackTrace?.callFrames?.[0]) });
+    }
+    case "Runtime.exceptionThrown": {
+      const d = p.exceptionDetails || {};
+      const text = d.exception?.description?.split("\n")[0] || d.text || "Uncaught exception";
+      return pushLog(tabId, { level: "error", text: text + where(d.stackTrace?.callFrames?.[0] || d) });
+    }
+    case "Log.entryAdded": {
+      const e = p.entry || {};
+      const level = e.level === "verbose" ? "debug" : e.level === "info" ? "log" : e.level;
+      return pushLog(tabId, { level, text: `[${e.source}] ${e.text}${e.url ? ` (${e.url.slice(0, 100)})` : ""}` });
+    }
+    case "Network.requestWillBeSent": {
+      const c = captures.get(tabId);
+      if (!c?.network) return;
+      if (!c.net.has(p.requestId)) c.order.push(p.requestId);
+      c.net.set(p.requestId, {
+        id: p.requestId,
+        method: p.request.method,
+        url: p.request.url,
+        type: p.type || "Other",
+        start: p.timestamp,
+      });
+      while (c.order.length > NET_LIMIT) c.net.delete(c.order.shift());
+      return;
+    }
+    case "Network.responseReceived": {
+      const r = captures.get(tabId)?.net.get(p.requestId);
+      if (r) Object.assign(r, { status: p.response.status, mime: p.response.mimeType, type: p.type || r.type });
+      return;
+    }
+    case "Network.loadingFinished": {
+      const r = captures.get(tabId)?.net.get(p.requestId);
+      if (r) Object.assign(r, { size: p.encodedDataLength, ms: Math.round((p.timestamp - r.start) * 1000) });
+      return;
+    }
+    case "Network.loadingFailed": {
+      const r = captures.get(tabId)?.net.get(p.requestId);
+      if (r) Object.assign(r, { failed: p.canceled ? "canceled" : p.errorText || "failed", ms: Math.round((p.timestamp - r.start) * 1000) });
+      return;
+    }
+  }
 });
+
+/** Turn on console or network capture for a tab. Returns true if it was off. */
+async function startCapture(tabId, kind) {
+  const c = captureFor(tabId);
+  if (c[kind]) return false;
+  if (kind === "console") {
+    await cdp(tabId, "Runtime.enable", {});
+    await cdp(tabId, "Log.enable", {}).catch(() => {});
+  } else {
+    await cdp(tabId, "Network.enable", { maxPostDataSize: 0 });
+  }
+  c[kind] = true;
+  return true;
+}
 // The content script (and its title badge) is replaced on navigation. Re-mark
 // tabs the agent owns once the new document is ready.
 chrome.tabs.onUpdated.addListener((tabId, info) => {
@@ -486,7 +653,11 @@ async function withBackgroundInput(tab, fn) {
   try {
     return await fn();
   } finally {
-    if (background) await setFocusEmulation(tab.id, false);
+    if (background) {
+      // While a dialog is open the renderer is paused and this would wait.
+      const off = setFocusEmulation(tab.id, false);
+      if (!dialogs.has(tab.id)) await off;
+    }
   }
 }
 
@@ -691,6 +862,7 @@ async function dispatch(method, params) {
     case "page.navigate": {
       const tab = await resolveTab(params);
       lastTabId = tab.id;
+      assertNoDialog(tab.id);
       await prepareTab(tab);
       await chrome.tabs.update(tab.id, { url: params.url });
       await waitForLoad(tab.id);
@@ -702,6 +874,7 @@ async function dispatch(method, params) {
     case "page.snapshot": {
       const tab = await resolveTab(params);
       lastTabId = tab.id;
+      assertNoDialog(tab.id);
       await prepareTab(tab);
       await markTab(tab.id);
       const res = await page(tab.id, "pointer:snapshot", params);
@@ -711,6 +884,7 @@ async function dispatch(method, params) {
     case "page.text": {
       const tab = await resolveTab(params);
       lastTabId = tab.id;
+      assertNoDialog(tab.id);
       await markTab(tab.id);
       const res = await page(tab.id, "pointer:text", params);
       return { text: res.text };
@@ -721,6 +895,7 @@ async function dispatch(method, params) {
       trace("act start", params.ref || params.selector || "", params.kind || "click");
       const tab = await resolveTab(params);
       lastTabId = tab.id;
+      assertNoDialog(tab.id);
       await prepareTab(tab);
       await markTab(tab.id);
       trace("act active");
@@ -750,7 +925,8 @@ async function dispatch(method, params) {
         const markAgentInput = () =>
           page(tab.id, "pointer:agent-window", { ms: 2000 }).catch(() => {});
         if (action === "click") {
-          await clickAt(tab.id, spot.x, spot.y, markAgentInput);
+          const { dialog } = await raceDialog(tab.id, clickAt(tab.id, spot.x, spot.y, markAgentInput));
+          if (dialog) return { ok: true, target: { role: spot.role, name: spot.name }, url: tab.url, dialog };
         } else if (action === "hover") {
           await mouseTo(tab.id, spot.x, spot.y);
         }
@@ -776,6 +952,7 @@ async function dispatch(method, params) {
       assertNotStopped();
       const tab = await resolveTab(params);
       lastTabId = tab.id;
+      assertNoDialog(tab.id);
       await prepareTab(tab);
       await markTab(tab.id);
       return await withBackgroundInput(tab, async () => {
@@ -791,14 +968,16 @@ async function dispatch(method, params) {
         ]);
         const markAgentInput = () =>
           page(tab.id, "pointer:agent-window", { ms: 2000 }).catch(() => {});
-        if (params.trusted === false) {
-          await page(tab.id, "pointer:domfill", { ref: params.ref, selector: params.selector, text: params.text });
-        } else {
-          await fillAt(tab.id, spot.x, spot.y, params.text ?? "", markAgentInput);
-        }
-        if (params.submit) {
-          await pressKey(tab.id, "Enter");
-        }
+        const typing = (async () => {
+          if (params.trusted === false) {
+            await page(tab.id, "pointer:domfill", { ref: params.ref, selector: params.selector, text: params.text });
+          } else {
+            await fillAt(tab.id, spot.x, spot.y, params.text ?? "", markAgentInput);
+          }
+          if (params.submit) await pressKey(tab.id, "Enter");
+        })();
+        const { dialog } = await raceDialog(tab.id, typing);
+        if (dialog) return { ok: true, target: label, url: tab.url, dialog };
         await sleep(params.submit ? 240 : 120);
         const changes = await collectChanges(tab.id, docId);
         return { ok: true, target: label, url: (await chrome.tabs.get(tab.id)).url, changes };
@@ -809,12 +988,14 @@ async function dispatch(method, params) {
       assertNotStopped();
       const tab = await resolveTab(params);
       lastTabId = tab.id;
+      assertNoDialog(tab.id);
       await prepareTab(tab);
       await markTab(tab.id);
       return await withBackgroundInput(tab, async () => {
         await page(tab.id, "pointer:agent-window", { ms: 2000 });
         const docId = await takeBaseline(tab.id);
-        await pressKey(tab.id, params.key || "Enter");
+        const { dialog } = await raceDialog(tab.id, pressKey(tab.id, params.key || "Enter"));
+        if (dialog) return { ok: true, key: params.key || "Enter", url: tab.url, dialog };
         await sleep(240);
         const changes = await collectChanges(tab.id, docId);
         return { ok: true, key: params.key || "Enter", url: (await chrome.tabs.get(tab.id)).url, changes };
@@ -825,6 +1006,7 @@ async function dispatch(method, params) {
       assertNotStopped();
       const tab = await resolveTab(params);
       lastTabId = tab.id;
+      assertNoDialog(tab.id);
       await markTab(tab.id);
       const docId = await takeBaseline(tab.id);
       const res = await page(tab.id, "pointer:scroll", params);
@@ -837,14 +1019,107 @@ async function dispatch(method, params) {
     case "page.find": {
       const tab = await resolveTab(params);
       lastTabId = tab.id;
+      assertNoDialog(tab.id);
       await markTab(tab.id);
       const res = await page(tab.id, "pointer:find", params);
       return { text: res.text };
     }
 
+    case "page.dialog": {
+      const tab = await resolveTab(params);
+      const open = dialogs.get(tab.id);
+      try {
+        await cdp(tab.id, "Page.handleJavaScriptDialog", {
+          accept: params.action === "accept",
+          promptText: params.text != null ? String(params.text) : undefined,
+        });
+      } catch (err) {
+        if (/no dialog/i.test(String(err?.message))) throw new Error("No dialog is open.");
+        throw err;
+      }
+      dialogs.delete(tab.id);
+      await sleep(240);
+      return { ok: true, dialog: open || null, action: params.action, url: (await chrome.tabs.get(tab.id)).url };
+    }
+
+    case "page.upload": {
+      assertNotStopped();
+      const tab = await resolveTab(params);
+      lastTabId = tab.id;
+      assertNoDialog(tab.id);
+      await markTab(tab.id);
+      const files = (params.paths || []).map(String);
+      if (!files.length) throw new Error("Pass at least one file path.");
+      return await withBackgroundInput(tab, async () => {
+        const target = await page(tab.id, "pointer:file-input", params);
+        if (files.length > 1 && !target.multiple) {
+          throw new Error(`This file input takes one file; ${files.length} were given.`);
+        }
+        const docId = await takeBaseline(tab.id);
+        if (target.x != null) {
+          await Promise.race([
+            page(tab.id, "pointer:act", { x: target.x, y: target.y, rect: target.rect, label: target.name, action: "upload" }).catch(() => {}),
+            sleep(1200),
+          ]);
+        }
+        const { root } = await cdp(tab.id, "DOM.getDocument", { depth: 0 });
+        const { nodeId } = await cdp(tab.id, "DOM.querySelector", {
+          nodeId: root.nodeId,
+          selector: '[data-pointer-upload="1"]',
+        });
+        if (!nodeId) throw new Error("The file input disappeared before the upload.");
+        try {
+          await cdp(tab.id, "DOM.setFileInputFiles", { files, nodeId });
+        } catch (err) {
+          const msg = String(err?.message || err);
+          if (/not allowed|file access|permission/i.test(msg)) {
+            throw new Error(
+              `Chrome refused the upload (${msg}). Turn on "Allow access to file URLs" for Pointer at chrome://extensions → Details.`
+            );
+          }
+          throw err;
+        }
+        await sleep(240);
+        const changes = await collectChanges(tab.id, docId);
+        return { ok: true, target: target.name, accept: target.accept, files: files.length, url: (await chrome.tabs.get(tab.id)).url, changes };
+      });
+    }
+
+    case "page.console":
+    case "page.network": {
+      const kind = method === "page.console" ? "console" : "network";
+      const tab = await resolveTab(params);
+      lastTabId = tab.id;
+      const started = await startCapture(tab.id, kind);
+      if (params.reload) {
+        assertNoDialog(tab.id);
+        await chrome.tabs.reload(tab.id);
+        await sleep(200);
+        await waitForLoad(tab.id, 20000);
+        await markTab(tab.id);
+      }
+      const c = captureFor(tab.id);
+      if (kind === "network" && params.body) {
+        const r = c.net.get(String(params.body));
+        if (!r) throw new Error(`No captured request with id ${params.body}.`);
+        const res = await cdp(tab.id, "Network.getResponseBody", { requestId: r.id });
+        return { request: r, body: res.base64Encoded ? null : res.body, base64: res.base64Encoded };
+      }
+      const out = kind === "console" ? c.logs.slice() : c.order.map((id) => c.net.get(id)).filter(Boolean);
+      if (params.clear) {
+        if (kind === "console") c.logs = [];
+        else {
+          c.net.clear();
+          c.order = [];
+        }
+      }
+      return { started, reloaded: Boolean(params.reload), url: (await chrome.tabs.get(tab.id)).url, entries: out };
+    }
+
     case "page.wait": {
       const tab = await resolveTab(params);
       lastTabId = tab.id;
+      assertNoDialog(tab.id);
       await markTab(tab.id);
       return page(tab.id, "pointer:wait", params);
     }
@@ -852,6 +1127,7 @@ async function dispatch(method, params) {
     case "page.screenshot": {
       const tab = await resolveTab(params);
       lastTabId = tab.id;
+      assertNoDialog(tab.id);
       await prepareTab(tab);
       await markTab(tab.id);
       await sleep(120);

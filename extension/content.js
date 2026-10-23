@@ -353,6 +353,11 @@
     // A plain div-based tab has no role and no tag we can key on, but the page
     // still says cursor:pointer, which is the best signal available.
     let role = roleOf(el);
+    // A label whose control is hidden is the control the human sees: the usual
+    // styled "Upload" button wraps a display:none file input.
+    if (!role && tag === "LABEL" && el.control && !isVisible(el.control)) {
+      return { role: "button", name: nameOf(el).slice(0, 120) };
+    }
     if (!role) {
       if (getComputedStyle(el).cursor !== "pointer") return null;
       // Skip wrappers whose real control is listed separately.
@@ -402,6 +407,7 @@
     }
     if (el.type === "checkbox" || el.type === "radio") line += el.checked ? " checked" : "";
     if (el.disabled || el.getAttribute("aria-disabled") === "true") line += " disabled";
+    if ((el.type === "file" && el.tagName === "INPUT") || el.control?.type === "file") line += " upload";
     if (el.getAttribute("aria-expanded") === "true") line += " expanded";
     return line;
   }
@@ -568,6 +574,23 @@
     return el;
   }
 
+  /** The <input type=file> an upload button or label stands for. */
+  function fileInputFor(el) {
+    const isFile = (n) => n?.tagName === "INPUT" && n.type === "file";
+    if (!el) return document.querySelector("input[type=file]");
+    if (isFile(el)) return el;
+    if (el.tagName === "LABEL" && isFile(el.control)) return el.control;
+    const inside = el.querySelector?.("input[type=file]");
+    if (inside) return inside;
+    // Styled upload buttons usually sit next to a hidden input.
+    let n = el.parentElement;
+    for (let i = 0; i < 4 && n; i++, n = n.parentElement) {
+      const near = n.querySelector("input[type=file]");
+      if (near) return near;
+    }
+    return null;
+  }
+
   function scrollIntoView(el) {
     const r = el.getBoundingClientRect();
     const pad = 80;
@@ -688,6 +711,30 @@
           }
           case "pointer:snapshot":
             return sendResponse({ ok: true, text: snapshot(msg.params || {}) });
+          case "pointer:file-input": {
+            const p = msg.params || {};
+            const el = p.ref || p.selector ? resolve(p) : null;
+            const input = fileInputFor(el);
+            if (!input) {
+              throw new Error(
+                el
+                  ? "No file input belongs to that element. Pass the ref of the upload button or field."
+                  : "This page has no file input."
+              );
+            }
+            document.querySelectorAll("[data-pointer-upload]").forEach((n) => n.removeAttribute("data-pointer-upload"));
+            input.setAttribute("data-pointer-upload", "1");
+            // Point at what the human sees: styled upload buttons hide the input.
+            const anchor = [el, input].find((n) => n && isVisible(n));
+            if (anchor) scrollIntoView(anchor);
+            return sendResponse({
+              ok: true,
+              multiple: input.multiple,
+              accept: input.accept || "",
+              name: (anchor ? nameOf(anchor) : nameOf(input)).slice(0, 80) || "file input",
+              ...(anchor ? center(anchor) : {}),
+            });
+          }
           case "pointer:find":
             return sendResponse({ ok: true, text: findElements(msg.params || {}) });
           case "pointer:baseline":

@@ -135,6 +135,10 @@ Never guess a CSS selector when a ref exists.
 | Read prose without HTML | `read_text` | `text` |
 | Wait for text, a selector, or time | `wait_for` | `wait <text\|ms>` |
 | Show the human the current state | `screenshot` | `shot <path.png>` |
+| Answer an alert / confirm / prompt | `dialog` (accept or dismiss, optional text) | `dialog accept\|dismiss [text]` |
+| Attach files to an upload field | `upload` (ref, paths) | `upload [ref] <file...>` |
+| Debug the page: console errors | `console` (level, reload) | `console [errors\|all] [--reload]` |
+| Debug the page: requests, failures, bodies | `network` (filter, failed, body) | `network [text] [--failed] [--body id]` |
 | Hide the pointer and stand down | `stop` | `stop` |
 
 Notes that save a round trip:
@@ -156,6 +160,10 @@ The tool makes actions easy. Judgment is still yours.
 - **Confirm before irreversible actions.** Purchases, sending messages or email, posting, deleting,
   booking, creating accounts. State what will happen, on which site, with which values, and wait for
   an explicit yes. A $15 inspection charge is still a charge.
+- **Dialogs are decisions.** When a result says a `confirm` opened ("Delete everything?"), treat it
+  like any irreversible action: tell the human what it says and wait for a yes before `dialog accept`.
+- **Upload only files the human named.** Never pick files from their disk on your own, and say which
+  file went to which site.
 - **Never handle credentials.** Do not ask for passwords, one-time codes, or card numbers, and do not
   type them. Ask the human to complete that step in the tab, then continue.
 - **Dismiss consent banners only when they block the task**, and say so in your report. Do not opt

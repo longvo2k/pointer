@@ -133,7 +133,16 @@ claude mcp add pointer -- node ~/.pointer/bin/mcp.mjs
 ```
 
 Tools: `browser_status`, `tabs_list`, `tab_open`, `tab_focus`, `snapshot`, `find`, `click`, `fill`,
-`press`, `scroll`, `read_text`, `wait_for`, `screenshot`, `stop`.
+`press`, `scroll`, `read_text`, `wait_for`, `screenshot`, `dialog`, `upload`, `console`, `network`,
+`stop`.
+
+- `dialog` answers an `alert`/`confirm`/`prompt`. When a click opens one, the click returns right away
+  and says so, instead of hanging while the page is paused.
+- `upload` attaches local files to a file input, including the usual styled "Upload" button over a
+  hidden input.
+- `console` and `network` read the tab's messages, errors, and requests (`reload: true` captures a
+  page load; `network` can return a response body). Capture starts on the first call, not before:
+  turning it on makes the debugger easier for anti-bot scripts to notice.
 
 The usual loop is short:
 
@@ -156,6 +165,8 @@ pointer find "sign up"
 pointer click e14
 pointer fill e9 "hello" --json
 pointer shot out.png
+pointer console errors --reload
+pointer network api --failed
 pointer browsers
 pointer use 3f9c1a2b
 ```
@@ -206,6 +217,10 @@ the only place that knows which browser and tab is active.
 | `POINTER_PORT` | `8790` | hub port. The extension always connects to 8790, so change `DEFAULT_PORT` in `extension/background.js` to match |
 | `POINTER_FOCUS_WINDOW` | `1` | also raise the OS window when `tab_focus` (or `open --focus`) brings a tab forward |
 | `POINTER_AGENT` | `agent` | name shown in status and the tab-title badge (`Claude · PAVE Inspect`) |
+
+## License
+
+MIT. See [LICENSE](LICENSE).
 
 ## Acknowledgements
 

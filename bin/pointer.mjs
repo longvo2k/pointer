@@ -261,6 +261,42 @@ async function main() {
       writeFileSync(path, Buffer.from(res.image.data, "base64"));
       return print(`saved ${path}`);
     }
+    case "dialog": {
+      const action = rest[0];
+      if (action !== "accept" && action !== "dismiss") throw new Error("Usage: pointer dialog accept|dismiss [prompt text]");
+      return print((await tool("dialog", { action, text: rest.length > 1 ? rest.slice(1).join(" ") : undefined })).text);
+    }
+    case "upload": {
+      const hasRef = /^@?e\d+$/.test(rest[0] || "");
+      const paths = hasRef ? rest.slice(1) : rest;
+      if (!paths.length) throw new Error("Usage: pointer upload [ref] <file...>");
+      return print((await tool("upload", { ...(hasRef ? { ref: rest[0] } : {}), paths })).text);
+    }
+    case "console": {
+      const level = ["errors", "warnings", "all"].find((l) => rest.includes(l));
+      return print((await tool("console", { level, reload: rest.includes("--reload"), clear: rest.includes("--clear") })).text);
+    }
+    case "network":
+    case "net": {
+      const opt = (name) => {
+        const i = rest.indexOf(name);
+        return i >= 0 ? rest[i + 1] : undefined;
+      };
+      const flags = new Set(["--failed", "--all", "--reload", "--clear"]);
+      const filter = rest.find((a, i) => !a.startsWith("--") && rest[i - 1] !== "--body" && !flags.has(a));
+      return print(
+        (
+          await tool("network", {
+            filter,
+            failed: rest.includes("--failed"),
+            all: rest.includes("--all"),
+            reload: rest.includes("--reload"),
+            clear: rest.includes("--clear"),
+            body: opt("--body"),
+          })
+        ).text
+      );
+    }
     case "stop":
       return print((await tool("stop")).text);
     case "tools":
@@ -289,6 +325,10 @@ function usage() {
   pointer scroll [up|down] [px]
   pointer text                  page as readable text
   pointer shot [path]           screenshot (pointer included)
+  pointer dialog accept|dismiss [text]  answer an alert/confirm/prompt
+  pointer upload [ref] <file...>       attach files to a file input
+  pointer console [errors|warnings|all] [--reload]
+  pointer network [filter] [--failed] [--all] [--reload] [--body <id>]
   pointer stop                  hide pointer, stop acting
   pointer setup [--no-open]     show install paths, open chrome://extensions
 
