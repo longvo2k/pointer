@@ -90,16 +90,17 @@ Then use `node bin/pointer.mjs …` in place of `pointer …` below.
 
 ### Multiple browsers and extension reloads
 
-If more than one Chrome profile has Pointer loaded, the hub keeps the first one it saw and leaves the
-others connected but idle. `tab_open` and every other action stay in that browser. Switching windows
-or profiles does not move Pointer to a different browser. Check and choose explicitly:
+If more than one Chrome profile has Pointer loaded (a work profile and a personal one, say), Pointer
+follows the one you are using. Each profile reports when its window was last focused, and a new task
+starts in the most recent one. A task already running stays in its profile even if you switch away:
+moving mid-task would strand the agent's tabs in the other profile. "New task" means the agent has
+been idle for 2 minutes (`POINTER_FOLLOW_IDLE_MS`).
 
 ```bash
-pointer browsers
-pointer use 3f9c1a2b
+pointer browsers         # ids, builds, last focus, which one is active
+pointer use 3f9c1a2b     # pin one profile
+pointer use auto         # follow the profile you use again
 ```
-
-Each line shows a short connection id, the build, and whether it is active.
 
 When you edit the extension, Chrome may keep serving the old copy of an unpacked extension even after
 a restart (this is easy to spot: the toolbar works, but the change is not there). Click **Reload** on
@@ -199,9 +200,9 @@ pointer use 3f9c1a2b
   `chrome-extension://` origin, and `/rpc` requires `application/json`, a localhost `Host`, and no
   `Origin` header. Other programs running as your user can still reach it, the same as your browser
   profile.
-- One browser is active at a time. If several Chrome profiles run the extension, the hub keeps the
-  first one active instead of switching silently; `pointer browsers` lists them and `pointer use <id>`
-  chooses another. (Multiple agents sharing tabs is still the next step.)
+- One browser is active at a time. With several Chrome profiles, a new task follows the profile you
+  focused last, and a running task never switches; `pointer use <id>` pins one. (Multiple agents
+  sharing tabs is still the next step.)
 
 ## Skill for agents
 
@@ -235,6 +236,7 @@ the only place that knows which browser and tab is active.
 | Variable | Default | Meaning |
 |---|---|---|
 | `POINTER_PORT` | `8790` | hub port. The extension always connects to 8790, so change `DEFAULT_PORT` in `extension/background.js` to match |
+| `POINTER_FOLLOW_IDLE_MS` | `120000` | idle time after which the next task follows the Chrome profile you focused last |
 | `POINTER_FOCUS_WINDOW` | `1` | also raise the OS window when `tab_focus` (or `open --focus`) brings a tab forward |
 | `POINTER_AGENT` | `agent` | name shown in status and the tab-title badge (`Claude · PAVE Inspect`) |
 

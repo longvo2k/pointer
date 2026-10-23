@@ -57,13 +57,13 @@ Expected: `Extension: connected`. If not:
 - If the extension is connected but calls fail, retry once — the service worker reconnects within
   about 30 seconds after an idle eviction.
 
-If more than one Chrome has the extension loaded (a work profile and a personal one, say), the hub
-keeps the first connection active and leaves the others idle rather than silently switching. If
-actions land in the wrong window or a click hangs, check and choose explicitly:
+If more than one Chrome profile has the extension loaded (a work profile and a personal one, say), a
+new task starts in the profile the human focused last; a task in progress stays where it is. If the
+human wants a specific profile, or actions land in the wrong one, check and choose explicitly:
 
 ```bash
-./scripts/pointer browsers      # ids, builds, which one is active
-./scripts/pointer use 3f9c1a2b
+./scripts/pointer browsers      # ids, builds, last focus, which one is active
+./scripts/pointer use 3f9c1a2b  # pin; `use auto` follows the human again
 ```
 
 After an extension update, `./scripts/pointer reload` asks the connected extension to reload from

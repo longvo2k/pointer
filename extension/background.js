@@ -31,7 +31,7 @@ const GROUP_TITLE_MAX = 24;
 
 // Toggle when hunting a slow command; logs go to the extension worker console.
 const TRACE = false;
-const BUILD = "0.2.8";
+const BUILD = "0.2.9";
 const traceStart = Date.now();
 self.__pointerBuild = BUILD;
 function trace(...args) {
@@ -85,6 +85,7 @@ function connect() {
       version: chrome.runtime.getManifest().version,
       instanceId,
       build: self.__pointerBuild || null,
+      lastFocusedAt: await focusedAt(),
     });
     setBadge("on");
     // MV3 stops an idle service worker after ~30s, which drops the socket.
@@ -137,6 +138,31 @@ function setBadge(state) {
   chrome.action.setBadgeText({ text: state === "on" ? "on" : "" }).catch(() => {});
   chrome.action.setBadgeBackgroundColor({ color: state === "on" ? "#2563eb" : "#9ca3af" }).catch(() => {});
 }
+
+// ---------------------------------------------------------- focus tracking ---
+// Each Chrome profile runs its own copy of this extension. Telling the hub when
+// this profile last had a focused window lets it start the next task in the
+// profile the human is using. Stored in session storage so an evicted worker
+// remembers it.
+async function focusedAt() {
+  let at = 0;
+  try {
+    at = (await chrome.storage.session.get("pointerFocusedAt")).pointerFocusedAt || 0;
+  } catch {}
+  try {
+    const win = await chrome.windows.getLastFocused({ windowTypes: ["normal"] });
+    if (win?.focused) at = Date.now(); // a window of this profile is in front right now
+  } catch {}
+  return at;
+}
+
+chrome.windows.onFocusChanged.addListener((windowId) => {
+  if (windowId === chrome.windows.WINDOW_ID_NONE) return; // focus left this profile
+  const at = Date.now();
+  chrome.storage.session.set({ pointerFocusedAt: at }).catch(() => {});
+  if (connected) send({ event: "focus", at });
+  else connect(); // hello carries the timestamp
+});
 
 // The service worker can be evicted; this keeps reconnecting while idle.
 // Create the alarm only once: re-creating it on every worker start resets its

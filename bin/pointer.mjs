@@ -202,6 +202,8 @@ async function main() {
               `build ${b.build || "unknown"}  ` +
               `instance ${b.instanceId ? b.instanceId.slice(0, 8) : "?"}  ` +
               `connected ${age}` +
+              (b.lastFocusedAt ? `  focused ${Math.round((now - b.lastFocusedAt) / 1000)}s ago` : "") +
+              (b.pinned ? "  (pinned)" : "") +
               (b.stale ? `  ⚠ stale: files are v${b.version}, Chrome runs ${b.build}. Remove + Load unpacked.` : "")
             );
           })
@@ -211,7 +213,11 @@ async function main() {
     case "use": {
       if (!rest[0]) throw new Error("Usage: pointer use <browserId>");
       const res = await rpc("ext.use", { id: rest[0] });
-      return print(`active browser ${res.active.slice(0, 8)}`);
+      return print(
+        res.pinned
+          ? `pinned to ${res.active.slice(0, 8)} (pointer use auto to follow the profile you use)`
+          : `following the profile you use${res.active ? ` (now ${res.active.slice(0, 8)})` : ""}`
+      );
     }
     case "reload":
       return print(`reloading ${(await rpc("ext.reloadAll")).reloading} extension(s)`);
@@ -320,7 +326,7 @@ function usage() {
   pointer serve                 run the hub (extension connects to it)
   pointer status                connection + tab state
   pointer browsers              list connected Chrome instances
-  pointer use <id>              route actions to one Chrome instance
+  pointer use <id>|auto         pin one Chrome profile, or follow the one you use
   pointer reload                reload every connected extension from disk
   pointer tabs                  list tabs
   pointer open <url> [--focus]  open a background tab (--focus raises it)
