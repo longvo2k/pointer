@@ -158,6 +158,10 @@ pointer use 3f9c1a2b
 
 - Snapshot covers the top frame. It does not traverse open shadow roots or reach into iframes yet.
 - There is no `eval` tool. Arbitrary JS in a logged-in tab turns a bug into an incident.
+- The hub listens on 127.0.0.1 only and refuses web pages: `/ext` accepts only a
+  `chrome-extension://` origin, and `/rpc` requires `application/json`, a localhost `Host`, and no
+  `Origin` header. Other programs running as your user can still reach it, the same as your browser
+  profile.
 - One browser is active at a time. If several Chrome profiles run the extension, the hub keeps the
   first one active instead of switching silently; `pointer browsers` lists them and `pointer use <id>`
   chooses another. (Multiple agents sharing tabs is still the next step.)
