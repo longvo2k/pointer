@@ -1,3 +1,5 @@
+<img src="extension/icons/icon128.png" width="96" height="96" alt="" align="right">
+
 # Pointer
 
 [![CI](https://github.com/longvo2k/pointer/actions/workflows/ci.yml/badge.svg)](https://github.com/longvo2k/pointer/actions/workflows/ci.yml)
