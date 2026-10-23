@@ -17,13 +17,29 @@ Only the latest release gets fixes.
 - **Web pages reaching the hub.** The hub listens on `127.0.0.1` only. `/rpc` requires
   `application/json`, a localhost `Host` header, and no `Origin` header, which blocks cross-site
   requests and DNS rebinding. `/ext` accepts only a `chrome-extension://` origin, so a page cannot
-  pose as the extension. These rules are covered by tests in [`test/hub.test.mjs`](test/hub.test.mjs).
+  pose as the extension. Bodies over 1 MB are refused. These rules are covered by tests in
+  [`test/hub.test.mjs`](test/hub.test.mjs).
+- **Other extensions posing as Pointer.** Any extension can open a socket to `127.0.0.1`, so `/ext`
+  also checks the extension id: the Web Store build, the `extension` folder of this install, or ids
+  you list in `POINTER_EXTENSION_IDS`. A reply counts only from the connection the request went to,
+  and a browser cannot claim a focus time in the future to take over.
 - **Arbitrary code in your tabs.** There is no `eval` tool and no tool that runs JavaScript you
   supply. CI fails if dynamic code (`eval`, `new Function`) appears in the source.
 - **Talking to outside servers.** The code makes no network requests except to `127.0.0.1`. CI fails
   if a non-local URL appears in the source.
-- **Acting unseen.** Agent tabs are grouped and badged, the cursor is drawn for every action, and
-  `Esc` or a real click in the agent's tab stops it.
+- **Acting unseen.** Agent tabs are grouped and badged, and the cursor is drawn for every action. The
+  cursor lives in a closed shadow root with `!important` styles, so page CSS cannot hide it.
+- **Ignoring a stop.** `Esc`, a real click in the agent's tab, the popup's Stop, or `Alt+Shift+S`
+  stops the agent. The stop holds: every action (including opening tabs, navigating, and answering
+  dialogs) is refused until the agent calls `resume`, and input already under way is cut off. It
+  survives the extension's service worker restarting. A page can swallow `Esc`, but not the
+  shortcut or the popup.
+- **Closing your tabs.** The agent closes only tabs it opened, never yours, even ones it worked in.
+- **Leaking secrets to the agent.** Values of password, one-time-code and card fields are hidden,
+  URL fragments and secret-looking query values are removed, page text excludes what the page hides
+  from you, and page strings cannot break a snapshot line to forge an element or ref.
+- **Uploading the wrong files.** `upload` refuses hidden files and files that look like keys or
+  credentials. Only `http`, `https`, and `about:blank` can be opened.
 
 ## What it cannot defend against
 
@@ -35,7 +51,10 @@ Only the latest release gets fixes.
   irreversible actions and never handle credentials.
 - **Other programs on your computer.** Any program running as your user can reach the hub on
   `127.0.0.1`, just as it can read your browser profile. Pointer does not add a boundary between
-  programs that run as you.
+  programs that run as you. On a machine shared with other users, they can reach `127.0.0.1` too;
+  do not run Pointer there.
+- **Reading tabs it did not open.** The agent can read and act in a tab you point it at, or the tab
+  you are on when it has none of its own. That is how it helps with a page you already have open.
 
 ## Permissions
 

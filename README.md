@@ -23,8 +23,9 @@ local hub and a Chrome extension to act in your own Chrome, and draws each move 
   (`click · Sign Up`) and a ripple. Agent tabs sit in a tab group named after the agent.
 - **You stay where you are.** The agent works in background tabs and never pulls you away from your
   tab, window, or profile. With several Chrome profiles, a new task starts in the one you are using.
-- **You can stop it.** `Esc` or a real click in the agent's tab stops it, and the next tool call
-  tells it to ask before going on.
+- **You can stop it.** `Esc`, a real click in the agent's tab, the popup's Stop button, or
+  `Alt+Shift+S` (`Option+Shift+S` on a Mac, works even if a page swallows `Esc`) stops it. Every
+  action is refused until the agent asks you and calls `resume`.
 - **Real input.** Clicks and keys go through `chrome.debugger`, so React handlers and pointer checks
   behave as they do for a person.
 - **Small token bill.** Snapshots list what is on screen, and every action reports only what changed.
@@ -199,18 +200,20 @@ show up too, so the agent sees "Saved" or "Pick a plan to continue" without anot
 | Screen size | `viewport` |
 | Act | `click`, `fill`, `press`, `scroll`, `upload`, `dialog` |
 | Debug | `console`, `network` |
-| Stop | `stop` |
+| Stop | `stop`, `resume` |
 
 A few that need explaining:
 
 - `tab_open` opens a background tab. `tab_select` switches the agent's working tab without bringing it
-  forward. Only `tab_focus` brings a tab to the front. `tab_close` closes only tabs the agent opened or
-  used.
+  forward. Only `tab_focus` brings a tab to the front. `tab_close` closes only tabs the agent opened;
+  your own tabs stay open even if the agent worked in them.
 - `find "sign up"` searches the whole page, on screen or not, and returns a few matching refs.
 - `dialog` answers an `alert`, `confirm`, or `prompt`. A click that opens one returns right away and
   says so instead of hanging.
 - `upload` attaches local files: to a file input, a styled button over a hidden one, or a button that
-  opens the file picker itself (the picker is intercepted, so no system dialog appears).
+  opens the file picker itself (the picker is intercepted, so no system dialog appears). It refuses
+  hidden files and anything that looks like a key or credential (`id_rsa`, `.env`, `*.pem`).
+- `tab_open` opens only `http`, `https`, and `about:blank`.
 - `viewport mobile` (or `tablet`, `desktop`, a width and height) emulates that screen in the agent's
   tab, with touch for phones and tablets, so the agent can check a responsive layout and take
   screenshots at each size. Your window and tabs keep their size. `viewport reset` undoes it.
@@ -269,8 +272,13 @@ tried to reach the hub while it was not running. It keeps retrying and connects 
 into some pages, and Chrome then refuses debugger input on that tab. Pointer falls back to page
 events for click, fill, and press. Most sites accept them; file upload has no fallback.
 
-**The agent stopped and asks before continuing.** You pressed `Esc` or clicked in the agent's tab
-while it was on screen. That is the stop signal, by design. `Esc` in your other tabs does not count.
+**The agent stopped and asks before continuing.** You pressed `Esc`, `Alt+Shift+S`, the popup's
+Stop, or clicked in the agent's tab while it was on screen. That is the stop signal, by design: every
+action is refused until the agent asks and calls `resume`. `Esc` in your other tabs does not count.
+
+**The hub refuses the extension ("not a Pointer build it knows").** The hub accepts the Web Store
+build and the `extension` folder of its own install. If you load Pointer from another folder, set
+`POINTER_EXTENSION_IDS` to the id `pointer status` shows, then restart the hub.
 
 ## How it works
 
@@ -339,6 +347,7 @@ privately.
 | `POINTER_AGENT` | `agent` | name in status, the tab group, and the title badge (`Claude · Example`) |
 | `POINTER_FOLLOW_IDLE_MS` | `120000` | idle time after which a new task follows the Chrome profile you focused last |
 | `POINTER_FOCUS_WINDOW` | `1` | also raise the OS window when `tab_focus` or `open --focus` brings a tab forward |
+| `POINTER_EXTENSION_IDS` | — | extra extension ids the hub accepts, comma separated (a copy loaded from another folder) |
 | `POINTER_PORT` | `8790` | hub port. The extension always connects to 8790, so change `DEFAULT_PORT` in `extension/background.js` to match |
 
 ## Skill for agents

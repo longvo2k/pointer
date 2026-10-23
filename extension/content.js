@@ -15,18 +15,24 @@
   window.__pointerLoaded = true;
 
   // ---------------------------------------------------------------- overlay ---
-  const HOST_ID = "__pointer-host";
+  // The host is kept here, never looked up by id: a page could plant a decoy
+  // element or style it away. A random tag, a closed shadow root and
+  // !important inline styles keep page CSS and scripts out of it.
+  let overlayHost = null;
+  let overlayRoot = null;
 
   function ensureOverlay() {
-    let host = document.getElementById(HOST_ID);
-    if (host) return host.shadowRoot;
-
-    host = document.createElement("div");
-    host.id = HOST_ID;
+    if (overlayHost) {
+      if (!overlayHost.isConnected) (document.documentElement || document.body).appendChild(overlayHost);
+      return overlayRoot;
+    }
+    const host = document.createElement("pointer-" + Math.random().toString(36).slice(2, 10));
     host.setAttribute("aria-hidden", "true");
-    host.style.cssText =
-      "all:initial;position:fixed;inset:0;pointer-events:none;z-index:2147483647;";
-    const root = host.attachShadow({ mode: "open" });
+    for (const [prop, value] of Object.entries({
+      all: "initial", display: "block", position: "fixed", inset: "0", "pointer-events": "none",
+      "z-index": "2147483647", visibility: "visible", opacity: "1",
+    })) host.style.setProperty(prop, value, "important");
+    const root = host.attachShadow({ mode: "closed" });
     root.innerHTML = `
       <style>
         :host { all: initial; }
@@ -79,6 +85,8 @@
       <div class="target"></div>
     `;
     (document.documentElement || document.body).appendChild(host);
+    overlayHost = host;
+    overlayRoot = root;
     return root;
   }
 
@@ -267,16 +275,63 @@
 
   function isVisible(el) {
     if (!el.getClientRects().length) return false;
+    // Chrome 121+: also catches a transparent or hidden ancestor.
+    if (el.checkVisibility && !el.checkVisibility({ opacityProperty: true, visibilityProperty: true })) return false;
     const s = getComputedStyle(el);
     if (s.visibility === "hidden" || s.display === "none" || Number(s.opacity) < 0.05) return false;
     const r = el.getBoundingClientRect();
     return r.width >= 1 && r.height >= 1;
   }
 
+  /**
+   * Page text on one line. Snapshot lines are parsed by an agent, so a page
+   * must not be able to start a new line or close a quote and forge an
+   * element or a ref.
+   */
+  function oneLine(s, max = 160) {
+    return String(s ?? "")
+      .replace(/[\s\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, " ")
+      .trim()
+      .replace(/"/g, "'")
+      .slice(0, max);
+  }
+
+  const SECRET_AUTOCOMPLETE = /(^|\s)(current-password|new-password|one-time-code|cc-number|cc-csc|cc-exp\S*)(\s|$)/i;
+  const SECRET_WORDS = new Set(["password", "passwd", "pass", "passcode", "pwd", "otp", "totp", "pin", "cvv", "cvc", "csc"]);
+  const SECRET_PHRASE = /onetime|cardnumber|ccnumber|securitycode/;
+
+  /** True when a field's name or id says it holds a secret ("userPassword", "otp_code"). */
+  function secretName(text) {
+    const words = String(text).replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase().split(/[^a-z0-9]+/);
+    return words.some((w) => SECRET_WORDS.has(w)) || SECRET_PHRASE.test(words.join(""));
+  }
+
+  /** Fields whose value must never reach the agent. */
+  function isSensitive(el) {
+    if (el.tagName !== "INPUT" && el.tagName !== "TEXTAREA") return false;
+    if (el.type === "password") return true;
+    if (SECRET_AUTOCOMPLETE.test(el.getAttribute("autocomplete") || "")) return true;
+    return secretName(`${el.name || ""} ${el.id || ""}`);
+  }
+
+  /** Secret-looking query values and the #fragment (OAuth tokens) removed. */
+  const SECRET_PARAM =
+    /(^|[_.-])(access_?token|id_?token|refresh_?token|token|secret|code|api_?key|key|auth|session(_?id)?|sid|sig(nature)?|password|passwd|pass|otp|jwt|ticket|credentials?)$/i;
+  function safeUrl(href) {
+    try {
+      const u = new URL(href);
+      u.hash = "";
+      for (const k of [...u.searchParams.keys()]) if (SECRET_PARAM.test(k)) u.searchParams.set(k, "redacted");
+      return u.href.replace(/=redacted/g, "=…");
+    } catch {
+      return String(href || "").split("#")[0];
+    }
+  }
+
   function nameOf(el) {
-    const clean = (s) => String(s || "").replace(/\s+/g, " ").trim();
+    const clean = (s) => oneLine(s, 400);
     const aria = el.getAttribute && el.getAttribute("aria-label");
-    if (aria) return clean(aria);
+    if (aria && aria.trim()) return clean(aria);
 
     const labelledby = el.getAttribute && el.getAttribute("aria-labelledby");
     if (labelledby) {
@@ -297,7 +352,9 @@
 
     if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") {
       if (el.placeholder) return clean(el.placeholder);
-      if (el.type === "submit" || el.type === "button") return clean(el.value);
+      if (el.type === "submit" || el.type === "button" || el.type === "reset") return clean(el.value);
+      // Never the field's own value: it may be a password or other secret.
+      return clean(el.getAttribute("title"));
     }
     if (el.tagName === "IMG") return clean(el.alt) || clean(el.title);
     return clean(el.innerText || el.value || el.getAttribute?.("title") || el.getAttribute?.("alt"));
@@ -328,7 +385,6 @@
       ref = "e" + ++nextRef;
       refOf.set(el, ref);
       refs.set(ref, el);
-      el.setAttribute("data-pointer-ref", ref);
     }
     return ref;
   }
@@ -353,9 +409,9 @@
     if (SKIP_TAGS.has(tag)) return null;
     if (!isVisible(el)) return null;
     if (el.matches(LIVE)) {
-      const text = (el.innerText || "").replace(/\s+/g, " ").trim();
+      const text = oneLine(el.innerText, 160);
       if (!text) return null;
-      return { role: el.getAttribute("role") === "alert" ? "alert" : "status", name: text.slice(0, 160) };
+      return { role: el.getAttribute("role") === "alert" ? "alert" : "status", name: text };
     }
 
     // Every element with pointer affordance, plus the semantic candidates.
@@ -397,22 +453,27 @@
   }
 
   function lineFor(el, { role, name }, ref, hrefs) {
-    let line = `- ${role}`;
-    if (name) line += ` "${name}"`;
+    let line = `- ${oneLine(role, 40)}`;
+    if (name) line += ` "${oneLine(name, 160)}"`;
     line += ` [ref=${ref}]`;
 
     // Link targets are ~45% of a snapshot and rarely needed to act; opt in.
     if (hrefs && el.tagName === "A" && el.href) {
       try {
-        const u = new URL(el.href);
+        const u = new URL(safeUrl(el.href));
         const where = u.origin === location.origin ? "" : u.host;
-        line += ` href="${(where + u.pathname + u.search).slice(0, 80) || "/"}"`;
+        line += ` href="${oneLine(where + u.pathname + u.search, 80) || "/"}"`;
       } catch {}
     }
     if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") {
-      const v = el.type === "password" ? "" : (el.value || "").slice(0, 60);
-      if (v) line += ` value="${v.replace(/"/g, "'")}"`;
-      if (el.placeholder && !name) line += ` placeholder="${el.placeholder.slice(0, 60)}"`;
+      if (isSensitive(el)) {
+        if (el.value) line += " value=(hidden)";
+      } else {
+        const v = oneLine(el.value, 60);
+        if (v) line += ` value="${v}"`;
+      }
+      const ph = oneLine(el.placeholder, 60);
+      if (ph && !name) line += ` placeholder="${ph}"`;
     }
     if (el.type === "checkbox" || el.type === "radio") line += el.checked ? " checked" : "";
     // Custom widgets (a div with role="radio", a tab, a toggle button) carry
@@ -436,8 +497,12 @@
     let above = 0;
     let below = 0;
     let scanned = 0;
+    let truncated = false;
     for (const el of document.querySelectorAll("body *")) {
-      if (++scanned > 12000) break;
+      if (++scanned > 12000) {
+        truncated = true;
+        break;
+      }
       const d = describe(el);
       if (!d) continue;
       const where = placeOf(el);
@@ -449,7 +514,7 @@
       const ref = refFor(el);
       items.push({ el, ref, where, role: d.role, name: d.name, line: lineFor(el, d, ref, hrefs) });
     }
-    return { items, above, below };
+    return { items, above, below, truncated };
   }
 
   function joinCapped(lines, maxChars, more) {
@@ -467,9 +532,12 @@
   }
 
   function snapshot({ scope = "viewport", hrefs = false, maxChars = 9000 } = {}) {
-    initOverlay();
-    const { items, above, below } = collect({ scope, hrefs });
-    const head = [`url: ${location.href}`, `title: ${document.title}`];
+    try {
+      initOverlay();
+    } catch {} // the cursor is a nicety; the snapshot must still work
+    const { items, above, below, truncated } = collect({ scope, hrefs });
+    const head = [`url: ${safeUrl(location.href)}`, `title: ${oneLine(document.title, 200)}`];
+    if (truncated) head.push("note: very large page, only the first 12000 elements were scanned");
     if (scope === "viewport" && (above || below)) {
       const range = document.documentElement.scrollHeight - window.innerHeight;
       const pct = range > 0 ? Math.round((window.scrollY / range) * 100) : 0;
@@ -539,14 +607,14 @@
     const total = added.length + removed.length + changed.length;
     // A big change (new route, modal over everything) reads better as a view.
     if (!addedOnly && total > limit) {
-      return { replaced: true, url: location.href, snapshot: snapshot({ scope: "viewport" }) };
+      return { replaced: true, url: safeUrl(location.href), snapshot: snapshot({ scope: "viewport" }) };
     }
     return {
-      url: location.href,
-      title: document.title,
+      url: safeUrl(location.href),
+      title: oneLine(document.title, 200),
       added: added.slice(0, limit * 2),
-      removed,
-      changed,
+      removed: removed.slice(0, limit * 2),
+      changed: changed.slice(0, limit * 2),
       more: Math.max(0, added.length - limit * 2),
     };
   }
@@ -554,8 +622,7 @@
   function findByRef(ref) {
     if (!ref) return null;
     const el = refs.get(ref);
-    if (el?.isConnected) return el;
-    return document.querySelector(`[data-pointer-ref="${CSS.escape(String(ref))}"]`);
+    return el?.isConnected ? el : null;
   }
 
   function find(selector) {
@@ -614,9 +681,10 @@
   }
 
   function readableText({ maxChars = 7000 } = {}) {
-    const clone = document.body.cloneNode(true);
-    clone.querySelectorAll("script,style,noscript,template,svg,iframe").forEach((n) => n.remove());
-    const text = (clone.innerText || "")
+    // innerText of the live body skips what is not rendered (display:none,
+    // scripts, templates). A detached clone would include hidden text, which
+    // a page could use to address the agent behind the human's back.
+    const text = (document.body?.innerText || "")
       .replace(/[ \t]+/g, " ")
       .replace(/ ?\n ?/g, "\n") // lines holding only spaces cost tokens too
       .replace(/\n{3,}/g, "\n\n")
@@ -626,8 +694,16 @@
 
   async function waitFor({ text, selector, ref, ms }, timeout = 10000) {
     if (ms) {
-      await sleep(Math.min(ms, 30000));
-      return { ok: true, waited: ms };
+      const waited = Math.min(Number(ms) || 0, 30000);
+      await sleep(waited);
+      return { ok: true, waited };
+    }
+    if (selector) {
+      try {
+        document.querySelector(selector);
+      } catch {
+        return { ok: false, error: `Invalid CSS selector "${selector}"` };
+      }
     }
     const start = Date.now();
     while (Date.now() - start < timeout) {
@@ -717,7 +793,8 @@
     }
   }
 
-  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    if (sender?.id !== chrome.runtime.id) return; // only Pointer's own worker
     if (!msg || !String(msg.type || "").startsWith("pointer:")) return;
     lastAgentActivity = Date.now();
     (async () => {
@@ -774,9 +851,15 @@
             return sendResponse({ ok: true, ...changes(msg.params || {}) });
           case "pointer:locate": {
             const el = resolve(msg.params || {});
+            if (!el.getClientRects().length) {
+              throw new Error("That element is hidden (not rendered). Take a fresh snapshot and pick a visible one.");
+            }
             scrollIntoView(el);
             await sleep(60);
             const { x, y, rect } = center(el);
+            if (rect.width < 1 || rect.height < 1) {
+              throw new Error("That element has no size on screen, so there is nothing to click. Pick another ref.");
+            }
             return sendResponse({
               ok: true, x, y, rect, role: roleOf(el), name: nameOf(el).slice(0, 80),
               inputType: el.tagName === "INPUT" ? el.type : null,
@@ -808,7 +891,8 @@
             const amount = p.amount ?? 600;
             if (p.ref) {
               const el = findByRef(p.ref);
-              el?.scrollIntoView({ block: "center", behavior: "instant" });
+              if (!el) throw new Error(`Unknown ref ${p.ref}. Take a fresh snapshot — refs reset on navigation.`);
+              el.scrollIntoView({ block: "center", behavior: "instant" });
             } else {
               // "instant": pages with smooth scrolling animate, and in a
               // background tab that animation stalls, so nothing would move.
@@ -847,7 +931,7 @@
             const target = document.activeElement || document.body;
             const init = {
               key, bubbles: true, cancelable: true, composed: true,
-              code: key.length === 1 ? `Key${key.toUpperCase()}` : key,
+              code: /^[0-9]$/.test(key) ? `Digit${key}` : /^[a-z]$/i.test(key) ? `Key${key.toUpperCase()}` : key,
               ctrlKey: parts.includes("Control"), metaKey: parts.includes("Meta"),
               altKey: parts.includes("Alt"), shiftKey: parts.includes("Shift"),
             };
@@ -870,7 +954,8 @@
             if (el.isContentEditable) {
               el.textContent = p.text ?? "";
             } else {
-              const proto = el.tagName === "TEXTAREA" ? HTMLTextAreaElement : HTMLInputElement;
+              const proto =
+                el.tagName === "TEXTAREA" ? HTMLTextAreaElement : el.tagName === "SELECT" ? HTMLSelectElement : HTMLInputElement;
               const setter = Object.getOwnPropertyDescriptor(proto.prototype, "value")?.set;
               if (setter) setter.call(el, p.text ?? "");
               else el.value = p.text ?? "";

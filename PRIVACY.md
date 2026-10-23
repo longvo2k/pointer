@@ -14,8 +14,10 @@ Pointer has no servers, accounts, analytics, or telemetry. Nothing is sent to th
 ## What goes to your agent
 
 When you connect an agent, Pointer gives it what it asks for: page text, lists of buttons and links,
-form values (never password fields), screenshots, console messages, and network requests of the tabs
-it works in.
+form values, screenshots, console messages, and network requests of the tabs it works in. Pointer
+hides the value of password, one-time-code and card fields (and fields named like them), drops the
+`#fragment` from URLs, and replaces secret-looking query values (`token`, `code`, `key`, …) with `…`.
+Text the page hides from you is not included in page text.
 
 **Your agent may send that to its AI model provider.** Claude Code sends it to Anthropic, Cursor and
 OpenCode to whichever model you chose, and so on. Their privacy terms apply to it. If a page holds

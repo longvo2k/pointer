@@ -17,6 +17,7 @@
  *   pointer shot [path]      screenshot (saves PNG, prints path)
  *   pointer viewport mobile  emulate a screen size (tablet, desktop, W H, reset)
  *   pointer stop             hide the pointer and stop
+ *   pointer resume           continue after a human stop (ask first)
  *   pointer setup            show install paths and open chrome://extensions
  *
  * Any command except `setup` and `serve` auto-starts the hub if it is not already running.
@@ -323,6 +324,8 @@ async function main() {
     }
     case "stop":
       return print((await tool("stop")).text);
+    case "resume":
+      return print((await tool("resume")).text);
     case "tools":
       return print(TOOLS.map((t) => `${t.name}\t${t.description.split(".")[0]}`).join("\n"));
     default:
@@ -357,6 +360,7 @@ function usage() {
   pointer console [errors|warnings|all] [--reload]
   pointer network [filter] [--failed] [--all] [--reload] [--body <id>]
   pointer stop                  hide pointer, stop acting
+  pointer resume                continue after the human stopped the agent (ask them first)
   pointer setup [--no-open]     show install paths, open chrome://extensions
 
   env: POINTER_PORT (8790), POINTER_FOCUS_WINDOW=0, POINTER_AGENT=<name>`;
