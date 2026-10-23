@@ -23,6 +23,27 @@ local hub and a Chrome extension to act in your own Chrome, and draws each move 
 - **Small token bill.** Snapshots list what is on screen, and every action reports only what changed.
   A six-step Wikipedia task used about 2,400 tokens of tool output.
 
+## Examples
+
+Each clip is a real run: OpenCode with a DeepSeek model drives Pointer in Chrome, and the left pane
+shows its tool calls and the summary it wrote at the end. Quiet stretches while the model thinks are
+shortened.
+
+**Test a flow.** *"Test the signup flow — pick the Scale plan, use ada@example.com and team Lovelace
+Labs, create the workspace, and check the invite link is shown. Report pass/fail per step."*
+
+![OpenCode tests a signup flow with Pointer: picks a plan, fills the form, creates the workspace, and reports pass or fail for each step](https://github.com/user-attachments/assets/4033e3a7-6afb-40f6-b13d-bb74a2a9d435)
+
+**Debug a broken page.** *"Users say the Reports page stays empty after clicking Load reports. Find
+the root cause from the console and network."*
+
+![OpenCode debugs an empty Reports page with Pointer: clicks Load reports, reads the console and network, and finds a 500 from the API plus missing error handling](https://github.com/user-attachments/assets/b23db6a5-e85f-4adf-bf2e-6bff89c2f2f8)
+
+**Research and summarize.** *"On Wikipedia, search for Model Context Protocol, open the article, and
+give me a 3-bullet summary."*
+
+![OpenCode researches the Model Context Protocol on Wikipedia with Pointer: searches, opens the article, and writes a three-bullet summary](https://github.com/user-attachments/assets/83338eb9-762a-496e-a6e9-c126ce573ffd)
+
 ## Install
 
 ```bash
@@ -124,7 +145,8 @@ changes in view:
 ```
 
 Refs stay valid until the page navigates. If the action loads a new page, the report is the new
-view.
+view. Status and error messages the page announces (`role="status"`, `role="alert"`, `aria-live`)
+show up too, so the agent sees "Saved" or "Pick a plan to continue" without another look.
 
 | Job | Tools |
 |---|---|
