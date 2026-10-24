@@ -87,7 +87,7 @@ view: 0% down · 0 elements above, 183 below (scroll, find, or snapshot scope "a
 - button "Code" [ref=e31]
 ```
 
-Refs stay valid until the page navigates, across snapshots and scrolls. Every `click`, `fill`,
+Refs stay valid until the page navigates, across snapshots and scrolls. Every `click`, `hover`, `fill`,
 `press`, and `scroll` returns what changed on screen, so you rarely need a fresh snapshot:
 
 ```
@@ -131,8 +131,10 @@ Never guess a CSS selector when a ref exists.
 | What is on screen, with refs | `snapshot` (`scope`, `hrefs`) | `snap [--all] [--hrefs]` |
 | Find an element anywhere on the page | `find` | `find <words>` |
 | Click | `click` | `click <ref\|selector>` |
+| Open a hover menu or tooltip | `hover` | `hover <ref\|selector>` |
 | Replace a field's contents | `fill` (optionally `submit`) | `fill <ref> <text>` |
 | Press Enter, Tab, Escape, Cmd/Ctrl+A | `press` | `press <key>` |
+| Go back, forward, or reload | `navigate` (action) | `back`, `forward`, `nav reload` |
 | Move down a long page / reveal an element | `scroll` (direction, amount, or ref) | `scroll [up\|down] [px]` |
 | Read prose without HTML | `read_text` | `text` |
 | Wait for text, a selector, or time | `wait_for` | `wait <text\|ms>` |
@@ -150,6 +152,9 @@ Notes that save a round trip:
 
 - `fill` clicks the field, selects everything, and types — it replaces rather than appends.
   Add `submit: true` to press Enter afterwards.
+- `hover` leaves the pointer on the element and reports what opened. Click a ref from that report
+  next; a click on something else moves the pointer away and the menu may close.
+- `navigate` back, forward, or reload returns the new view. Refs from before it are gone.
 - `wait_for` is cheaper than polling with repeated snapshots after a click that loads data.
 - `screenshot` captures the agent's tab, including the pointer label, even when the human is on
   another tab. Use it when layout or visual state matters; use `snapshot` when you need to act.

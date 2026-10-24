@@ -10,6 +10,8 @@
  *   pointer snap [--all] [--hrefs]  on-screen elements with refs
  *   pointer find <words>     search the whole page for elements
  *   pointer click <ref|css>
+ *   pointer hover <ref|css>  move the pointer onto an element without clicking
+ *   pointer nav back|forward|reload  (also: pointer back, pointer forward)
  *   pointer fill <ref|css> <text...>
  *   pointer press <key>
  *   pointer scroll [up|down] [px]
@@ -254,6 +256,18 @@ async function main() {
       const target = /^@?e\d+$/.test(rest[0]) ? { ref: rest[0] } : { selector: rest[0] };
       return print((await tool("click", target)).text);
     }
+    case "hover": {
+      if (!rest[0]) throw new Error("Usage: pointer hover <ref|selector>");
+      const target = /^@?e\d+$/.test(rest[0]) ? { ref: rest[0] } : { selector: rest[0] };
+      return print((await tool("hover", target)).text);
+    }
+    case "back":
+    case "forward":
+      return print((await tool("navigate", { action: cmd })).text);
+    case "nav":
+    case "navigate":
+      if (!["back", "forward", "reload"].includes(rest[0])) throw new Error("Usage: pointer nav back|forward|reload");
+      return print((await tool("navigate", { action: rest[0] })).text);
     case "fill":
     case "type": {
       if (!rest[0]) throw new Error("Usage: pointer fill <ref|selector> <text>");
@@ -352,7 +366,9 @@ function usage() {
   pointer snap [--all] [--hrefs] on-screen elements with refs
   pointer find <words>          search the whole page for elements
   pointer click <ref|selector>  move the pointer, then click
+  pointer hover <ref|selector>  move the pointer onto it, no click (hover menus, tooltips)
   pointer fill <ref|selector> <text>
+  pointer nav back|forward|reload  history and page reload (back, forward work alone too)
   pointer press <key>
   pointer scroll [up|down] [px]
   pointer text                  page as readable text

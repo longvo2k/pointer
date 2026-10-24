@@ -133,3 +133,39 @@ test("layout passes the scope and shows the findings", async () => {
   await callTool(hub, "layout", {});
   assert.equal(calls[1][1].scope, "all");
 });
+
+test("hover moves onto the element without clicking and reports what opened", async () => {
+  const calls = [];
+  const hub = {
+    call: async (method, params) => (
+      calls.push([method, params]),
+      {
+        target: { role: "button", name: "Products" },
+        url: "https://example.com/",
+        changes: { added: ['- link "Pricing" [ref=e12]'], removed: [], changed: [], more: 0 },
+      }
+    ),
+  };
+  const out = await callTool(hub, "hover", { ref: "@e4" });
+  assert.deepEqual(calls[0], ["page.act", { ref: "e4", kind: "hover" }]);
+  assert.match(out.text, /^hovering over button "Products" → https:\/\/example.com\//);
+  assert.match(out.text, /\+ link "Pricing" \[ref=e12\]/);
+  await assert.rejects(callTool(hub, "hover", {}), /ref/);
+});
+
+test("navigate goes back, forward, or reloads and shows the new view", async () => {
+  const calls = [];
+  const hub = {
+    call: async (method, params) => (
+      calls.push([method, params]),
+      { url: "https://example.com/list?token=abc", snapshot: "- link \"Item\" [ref=e1]" }
+    ),
+  };
+  const out = await callTool(hub, "navigate", { action: "back" });
+  assert.deepEqual(calls[0], ["page.history", { action: "back" }]);
+  assert.match(out.text, /^went back → https:\/\/example.com\/list\?token=…/);
+  assert.match(out.text, /current view:\n- link "Item" \[ref=e1\]/);
+  assert.match((await callTool(hub, "navigate", { action: "reload" })).text, /^reloaded/);
+  await assert.rejects(callTool(hub, "navigate", { action: "home" }), /back.*forward.*reload/);
+  assert.equal(calls.length, 2);
+});

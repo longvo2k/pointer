@@ -1170,6 +1170,35 @@ async function dispatch(method, params) {
       return { tabId: tab.id, url: fresh.url, title: fresh.title };
     }
 
+    case "page.history": {
+      assertNotStopped();
+      const action = params.action;
+      if (!HISTORY_ACTIONS[action]) throw new Error('action must be "back", "forward" or "reload"');
+      const tab = await resolveTab(params);
+      lastTabId = tab.id;
+      assertNoDialog(tab.id);
+      await markTab(tab.id);
+      const started = watchNavigation(tab.id);
+      try {
+        await HISTORY_ACTIONS[action](tab.id);
+      } catch (err) {
+        started.cancel();
+        if (action !== "reload" && /history|next page|previous page/i.test(err?.message || "")) {
+          throw new Error(`There is no page to go ${action} to in this tab.`);
+        }
+        throw err;
+      }
+      const navigated = await started.promise;
+      if (!navigated && action !== "reload") {
+        throw new Error(`There is no page to go ${action} to in this tab.`);
+      }
+      await waitForLoad(tab.id);
+      await markTab(tab.id);
+      const snap = await page(tab.id, "pointer:snapshot", { scope: "viewport" });
+      const fresh = await chrome.tabs.get(tab.id);
+      return { tabId: tab.id, url: fresh.url, title: fresh.title, snapshot: snap.text };
+    }
+
     case "page.snapshot": {
       const tab = await resolveTab(params);
       lastTabId = tab.id;
@@ -1243,7 +1272,13 @@ async function dispatch(method, params) {
             synthetic = true;
           }
         } else if (action === "hover") {
-          await mouseTo(tab.id, spot.x, spot.y);
+          try {
+            await mouseTo(tab.id, spot.x, spot.y);
+          } catch (err) {
+            if (!debuggerBlocked(err)) throw err;
+            await page(tab.id, "pointer:domhover", params);
+            synthetic = true;
+          }
         }
         trace("act input done");
 
@@ -1604,6 +1639,35 @@ async function dispatch(method, params) {
     default:
       throw new Error(`Unknown method ${method}`);
   }
+}
+
+const HISTORY_ACTIONS = {
+  back: (tabId) => chrome.tabs.goBack(tabId),
+  forward: (tabId) => chrome.tabs.goForward(tabId),
+  reload: (tabId) => chrome.tabs.reload(tabId),
+};
+
+/**
+ * Resolve true once the tab starts a navigation (a load or a URL change, which
+ * also covers pages restored from the back/forward cache and in-app history),
+ * or false if none starts in time. Without this, waitForLoad could return
+ * before the navigation begins and report the old page.
+ */
+function watchNavigation(tabId, timeout = 3000) {
+  let finish;
+  const promise = new Promise((resolve) => {
+    const listener = (id, change) => {
+      if (id === tabId && (change.status === "loading" || change.url)) finish(true);
+    };
+    const timer = setTimeout(() => finish(false), timeout);
+    finish = (value) => {
+      clearTimeout(timer);
+      chrome.tabs.onUpdated.removeListener(listener);
+      resolve(value);
+    };
+    chrome.tabs.onUpdated.addListener(listener);
+  });
+  return { promise, cancel: () => finish(false) };
 }
 
 async function waitForLoad(tabId, timeout = 20000) {

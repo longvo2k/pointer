@@ -198,7 +198,7 @@ show up too, so the agent sees "Saved" or "Pick a plan to continue" without anot
 | Tabs | `browser_status`, `tabs_list`, `tab_open`, `tab_select`, `tab_close`, `tab_focus` |
 | Read | `snapshot`, `find`, `read_text`, `screenshot`, `wait_for` |
 | Screen size and layout | `viewport`, `layout` |
-| Act | `click`, `fill`, `press`, `scroll`, `upload`, `dialog` |
+| Act | `click`, `hover`, `fill`, `press`, `scroll`, `navigate`, `upload`, `dialog` |
 | Debug | `console`, `network` |
 | Stop | `stop`, `resume` |
 
@@ -207,6 +207,9 @@ A few that need explaining:
 - `tab_open` opens a background tab. `tab_select` switches the agent's working tab without bringing it
   forward. Only `tab_focus` brings a tab to the front. `tab_close` closes only tabs the agent opened;
   your own tabs stay open even if the agent worked in them.
+- `hover` moves the pointer onto an element without clicking, to open hover menus and tooltips, and
+  reports what appeared.
+- `navigate` goes back, forward, or reloads the agent's tab and returns the new view.
 - `find "sign up"` searches the whole page, on screen or not, and returns a few matching refs.
 - `dialog` answers an `alert`, `confirm`, or `prompt`. A click that opens one returns right away and
   says so instead of hanging.
@@ -233,6 +236,8 @@ pointer snap                          # --all for the whole page, --hrefs for li
 pointer find "sign up"
 pointer click e14
 pointer fill e9 "hello"
+pointer hover e7                      # open a hover menu
+pointer back                          # also: forward, nav reload
 pointer dialog dismiss
 pointer upload e4 ~/resume.pdf
 pointer console errors --reload
