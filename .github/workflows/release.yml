@@ -1,9 +1,13 @@
-name: Publish to npm
+name: Release
 
 # Runs when a version tag (v1.2.3) is pushed. The package is built here, in public,
 # and npm records that link (provenance), so anyone can check what it came from.
 # Publishing uses npm trusted publishing: GitHub proves to npm that this workflow,
 # in this repo and environment, is the one publishing. No npm token is stored.
+#
+# After npm, the extension is uploaded to the Chrome Web Store and sent for review.
+# The store has no trusted publishing, so that job uses OAuth secrets kept in the
+# chrome-web-store environment. It skips itself until those secrets are set.
 on:
   push:
     tags: ["v*"]
@@ -39,3 +43,55 @@ jobs:
       - run: npm run check
       - run: npm test
       - run: npm publish --provenance --access public
+
+  chrome-web-store:
+    runs-on: ubuntu-latest
+    environment: chrome-web-store
+    needs: publish # only after the version check and tests above pass
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Zip the extension
+        run: cd extension && zip -r ../extension.zip . -x ".*"
+      - name: Upload and submit for review
+        env:
+          CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
+          REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
+          PUBLISHER_ID: ${{ secrets.CWS_PUBLISHER_ID }}
+          EXTENSION_ID: ${{ secrets.CWS_EXTENSION_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "$CLIENT_ID" ] || [ -z "$CLIENT_SECRET" ] || [ -z "$REFRESH_TOKEN" ] \
+             || [ -z "$PUBLISHER_ID" ] || [ -z "$EXTENSION_ID" ]; then
+            echo "::notice::Chrome Web Store secrets are not set; skipping the store upload."
+            exit 0
+          fi
+
+          token=$(curl -fsS https://oauth2.googleapis.com/token \
+            -d client_id="$CLIENT_ID" -d client_secret="$CLIENT_SECRET" \
+            -d refresh_token="$REFRESH_TOKEN" -d grant_type=refresh_token | jq -r .access_token)
+          echo "::add-mask::$token"
+          api=https://chromewebstore.googleapis.com
+          item="publishers/$PUBLISHER_ID/items/$EXTENSION_ID"
+
+          upload=$(curl -fsS -X POST -H "Authorization: Bearer $token" \
+            -T extension.zip "$api/upload/v2/$item:upload")
+          echo "$upload"
+          state=$(echo "$upload" | jq -r .uploadState)
+          # Large uploads finish in the background; poll until done.
+          for _ in $(seq 1 20); do
+            [ "$state" != "UPLOAD_IN_PROGRESS" ] && break
+            sleep 15
+            status=$(curl -fsS -H "Authorization: Bearer $token" "$api/v2/$item:fetchStatus")
+            echo "$status"
+            state=$(echo "$status" | jq -r '.lastAsyncUploadState // .uploadState')
+          done
+          if [ "$state" != "SUCCEEDED" ]; then
+            echo "Upload did not succeed (state: $state)."; exit 1
+          fi
+
+          curl -fsS -X POST -H "Authorization: Bearer $token" "$api/v2/$item:publish"
+          echo
+          echo "Submitted for Chrome Web Store review."
