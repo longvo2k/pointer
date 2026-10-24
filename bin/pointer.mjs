@@ -16,6 +16,7 @@
  *   pointer text             read the page as text
  *   pointer shot [path]      screenshot (saves PNG, prints path)
  *   pointer viewport mobile  emulate a screen size (tablet, desktop, W H, reset)
+ *   pointer layout           check spacing, overflow, overlaps, tap targets
  *   pointer stop             hide the pointer and stop
  *   pointer resume           continue after a human stop (ask first)
  *   pointer setup            show install paths and open chrome://extensions
@@ -286,6 +287,8 @@ async function main() {
         : { preset: words[0] };
       return print((await tool("viewport", { ...args, ...(mobile != null ? { mobile } : {}) })).text);
     }
+    case "layout":
+      return print((await tool("layout", { scope: rest.includes("--screen") ? "viewport" : "all" })).text);
     case "dialog": {
       const action = rest[0];
       if (action !== "accept" && action !== "dismiss") throw new Error("Usage: pointer dialog accept|dismiss [prompt text]");
@@ -355,6 +358,7 @@ function usage() {
   pointer text                  page as readable text
   pointer shot [path]           screenshot (pointer included)
   pointer viewport <preset|W H> emulate mobile, tablet, desktop, or W H [--mobile]; reset when done
+  pointer layout [--screen]     find overflow, clipped text, overlaps, small targets, tight padding, uneven gaps
   pointer dialog accept|dismiss [text]  answer an alert/confirm/prompt
   pointer upload [ref] <file...>       attach files to a file input
   pointer console [errors|warnings|all] [--reload]

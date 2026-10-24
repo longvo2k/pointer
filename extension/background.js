@@ -1180,6 +1180,15 @@ async function dispatch(method, params) {
       return { tabId: tab.id, text: res.text, url: (await chrome.tabs.get(tab.id)).url };
     }
 
+    case "page.layout": {
+      const tab = await resolveTab(params);
+      lastTabId = tab.id;
+      assertNoDialog(tab.id);
+      await markTab(tab.id);
+      const res = await page(tab.id, "pointer:layout", { scope: params.scope, limit: params.limit });
+      return { text: res.text, url: (await chrome.tabs.get(tab.id)).url };
+    }
+
     case "page.text": {
       const tab = await resolveTab(params);
       lastTabId = tab.id;

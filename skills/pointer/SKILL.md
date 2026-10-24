@@ -138,6 +138,7 @@ Never guess a CSS selector when a ref exists.
 | Wait for text, a selector, or time | `wait_for` | `wait <text\|ms>` |
 | Show the human the current state | `screenshot` | `shot <path.png>` |
 | Check a responsive layout | `viewport` (mobile, tablet, desktop, reset, or width + height) | `viewport <preset\|W H>` |
+| Find layout bugs in exact pixels | `layout` (`scope`) | `layout [--screen]` |
 | Answer an alert / confirm / prompt | `dialog` (accept or dismiss, optional text) | `dialog accept\|dismiss [text]` |
 | Attach files to an upload field | `upload` (ref, paths) | `upload [ref] <file...>` |
 | Debug the page: console errors | `console` (level, reload) | `console [errors\|all] [--reload]` |
@@ -155,6 +156,9 @@ Notes that save a round trip:
 - `viewport` changes the screen size of your tab only, never the human's window. For a responsive
   check, go through `mobile`, `tablet`, `desktop`, taking a `screenshot` or reading the returned view
   at each, then `viewport reset`. Closing the tab also clears it.
+- `layout` finds what screenshots hide: overflow and its cause, clipped text, overlapping targets,
+  small tap targets, tight padding, uneven gaps. `!` lines are bugs, `~` lines are worth a look. Run it
+  at each viewport size, fix, and run it again; refs in its output work with `scroll` and `click`.
 - Actions do not bring the agent's tab to the front. If you need the human to watch, call
   `tab_focus` first; otherwise leave them where they are.
 - Prefer MCP tools when they are registered. The CLI is the same bridge, so mixing them in one task

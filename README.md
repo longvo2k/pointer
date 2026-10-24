@@ -197,7 +197,7 @@ show up too, so the agent sees "Saved" or "Pick a plan to continue" without anot
 |---|---|
 | Tabs | `browser_status`, `tabs_list`, `tab_open`, `tab_select`, `tab_close`, `tab_focus` |
 | Read | `snapshot`, `find`, `read_text`, `screenshot`, `wait_for` |
-| Screen size | `viewport` |
+| Screen size and layout | `viewport`, `layout` |
 | Act | `click`, `fill`, `press`, `scroll`, `upload`, `dialog` |
 | Debug | `console`, `network` |
 | Stop | `stop`, `resume` |
@@ -217,6 +217,10 @@ A few that need explaining:
 - `viewport mobile` (or `tablet`, `desktop`, a width and height) emulates that screen in the agent's
   tab, with touch for phones and tablets, so the agent can check a responsive layout and take
   screenshots at each size. Your window and tabs keep their size. `viewport reset` undoes it.
+- `layout` measures the page for bugs a screenshot hides, in exact pixels: a page wider than the
+  screen (and the element that causes it), clipped text, clickable elements covering each other, tap
+  targets under 24px (or 44px on touch), text squeezed against or spilling out of its box, and uneven
+  gaps between repeated items. Run it after `viewport mobile`, `tablet`, and `desktop`.
 - `console` and `network` read the tab's errors and requests. Capture starts on the first call
   (`reload: true` captures a page load), because turning it on makes the debugger easier for anti-bot
   scripts to notice.
@@ -235,6 +239,7 @@ pointer console errors --reload
 pointer network api --failed
 pointer shot out.png
 pointer viewport mobile                # also tablet, desktop, 390 844, reset
+pointer layout                         # overflow, clipped text, overlaps, tap targets, spacing
 pointer close --all                   # close the agent's tabs
 ```
 
