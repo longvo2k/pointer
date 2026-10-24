@@ -1176,6 +1176,23 @@
             setTimeout(() => el.click(), 0);
             return;
           }
+          case "pointer:domhover": {
+            // Script hover handlers run; CSS :hover does not, page events cannot set it.
+            const el = resolve(msg.params || {});
+            const r = el.getBoundingClientRect();
+            const at = {
+              bubbles: true, cancelable: true, composed: true, view: window,
+              clientX: r.left + r.width / 2, clientY: r.top + r.height / 2,
+            };
+            const ptr = { ...at, pointerId: 1, pointerType: "mouse", isPrimary: true };
+            el.dispatchEvent(new PointerEvent("pointerover", ptr));
+            el.dispatchEvent(new PointerEvent("pointerenter", { ...ptr, bubbles: false }));
+            el.dispatchEvent(new MouseEvent("mouseover", at));
+            el.dispatchEvent(new MouseEvent("mouseenter", { ...at, bubbles: false }));
+            el.dispatchEvent(new PointerEvent("pointermove", ptr));
+            el.dispatchEvent(new MouseEvent("mousemove", at));
+            return sendResponse({ ok: true });
+          }
           case "pointer:dompress": {
             const parts = String(msg.params?.key || "Enter").split("+");
             const key = parts.pop();
