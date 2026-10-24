@@ -1,6 +1,6 @@
 {
   "name": "@longvo2k/pointer",
-  "version": "0.2.17",
+  "version": "0.2.18",
   "type": "module",
   "description": "Drive a real Chrome tab from any MCP agent, with a visible pointer the human can follow.",
   "keywords": [
