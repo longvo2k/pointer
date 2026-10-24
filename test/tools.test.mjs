@@ -117,3 +117,19 @@ test("urls in tool output lose tokens and the fragment", async () => {
   assert.doesNotMatch(out.text, /abc123|secret/);
   assert.match(out.text, /state=xyz&page=2/);
 });
+
+test("layout passes the scope and shows the findings", async () => {
+  const calls = [];
+  const hub = {
+    call: async (method, params) => (
+      calls.push([method, params]),
+      { text: "layout at 375x812 (touch), whole page: 1 problems, 0 warnings\n! page is 17px wider than the screen", url: "https://x.test/a#t=1" }
+    ),
+  };
+  const out = await callTool(hub, "layout", { scope: "viewport" });
+  assert.deepEqual(calls[0], ["page.layout", { scope: "viewport", limit: undefined }]);
+  assert.match(out.text, /17px wider/);
+  assert.match(out.text, /→ https:\/\/x\.test\/a$/);
+  await callTool(hub, "layout", {});
+  assert.equal(calls[1][1].scope, "all");
+});

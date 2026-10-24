@@ -715,6 +715,255 @@
     return { ok: false, error: `Timed out waiting for ${text || selector || ref}` };
   }
 
+  // ----------------------------------------------------------------- layout ---
+  // Measure the page for layout bugs a screenshot hides: overflow, clipped
+  // text, overlaps, small tap targets, tight padding, uneven gaps. Fixed code,
+  // no page scripts: it only reads sizes and computed styles.
+
+  const px = (n) => `${Math.round(n)}px`;
+  const size = (w, h) => `${Math.round(w)}x${Math.round(h)}px`;
+
+  /** Fixed or sticky (itself or an ancestor): it moves with scrolling, so overlaps are expected. */
+  function pinned(el) {
+    for (let n = el; n && n !== document.body; n = n.parentElement) {
+      const p = getComputedStyle(n).position;
+      if (p === "fixed" || p === "sticky") return true;
+    }
+    return false;
+  }
+
+  /** Bounding box of the element's text only (not images, video or empty boxes). */
+  function textBox(el) {
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    const range = document.createRange();
+    let box = null;
+    let count = 0;
+    for (let n = walker.nextNode(); n && count < 300; n = walker.nextNode()) {
+      if (!n.textContent.trim()) continue;
+      const parent = n.parentElement;
+      if (!parent || !isVisible(parent)) continue;
+      // Text inside a scroller or clipping box only shows within that box.
+      let clip = null;
+      for (let a = parent; a && a !== el; a = a.parentElement) {
+        const cs = getComputedStyle(a);
+        if (cs.overflowX !== "visible" || cs.overflowY !== "visible") clip = a.getBoundingClientRect();
+      }
+      range.selectNodeContents(n);
+      for (let r of range.getClientRects()) {
+        if (clip) {
+          r = { left: Math.max(r.left, clip.left), right: Math.min(r.right, clip.right), top: Math.max(r.top, clip.top), bottom: Math.min(r.bottom, clip.bottom) };
+          r.width = r.right - r.left;
+          r.height = r.bottom - r.top;
+        }
+        if (r.width <= 0 || r.height <= 0) continue;
+        count++;
+        box = box
+          ? { left: Math.min(box.left, r.left), top: Math.min(box.top, r.top), right: Math.max(box.right, r.right), bottom: Math.max(box.bottom, r.bottom) }
+          : { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+      }
+    }
+    return box;
+  }
+  const LAYOUT_SKIP = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE", "HEAD", "META", "LINK", "BR", "WBR"]);
+
+  /** A short handle for any element: role and name if it has one, else tag.class "text". */
+  function labelOf(el) {
+    const d = describe(el);
+    const ref = refFor(el);
+    if (d) return `${oneLine(d.role, 30)}${d.name ? ` "${oneLine(d.name, 40)}"` : ""} [ref=${ref}]`;
+    const cls = typeof el.className === "string" && el.className.trim() ? "." + el.className.trim().split(/\s+/)[0] : "";
+    const text = oneLine(el.innerText || el.getAttribute?.("aria-label") || "", 30);
+    return `${el.tagName.toLowerCase()}${cls}${text ? ` "${text}${(el.innerText || "").length > 30 ? "…" : ""}"` : ""} [ref=${ref}]`;
+  }
+
+  /** The nearest ancestor that clips or scrolls horizontally (it contains overflow). */
+  function clipsX(el) {
+    for (let n = el.parentElement; n && n !== document.body && n !== document.documentElement; n = n.parentElement) {
+      const o = getComputedStyle(n).overflowX;
+      if (o !== "visible") return n;
+    }
+    return null;
+  }
+
+  /** A box the eye reads as a box: its own background, a border all round, or a shadow. */
+  function hasBoundary(el, cs) {
+    const bg = cs.backgroundColor;
+    const solid = bg && bg !== "transparent" && !/rgba\([^)]*,\s*0\)$/.test(bg);
+    const parentBg = el.parentElement ? getComputedStyle(el.parentElement).backgroundColor : "";
+    const ownBg = solid && bg !== parentBg;
+    const border = ["Top", "Right", "Bottom", "Left"].every((s) => parseFloat(cs[`border${s}Width`]) > 0 && cs[`border${s}Style`] !== "none");
+    return ownBg || border || (cs.boxShadow && cs.boxShadow !== "none");
+  }
+
+  function isInteractiveEl(el) {
+    const d = describe(el);
+    return Boolean(d && ACTIONABLE.has(d.role));
+  }
+
+  /** Links inside running text are exempt from target size rules (WCAG 2.5.8). */
+  function inlineInText(el) {
+    if (el.tagName !== "A") return false;
+    const parent = el.parentElement;
+    if (!parent || getComputedStyle(el).display !== "inline") return false;
+    const text = (parent.innerText || "").replace(/\s+/g, " ").trim();
+    return text.length > (el.innerText || "").trim().length + 20;
+  }
+
+  function layoutReport({ scope = "all", limit = 40 } = {}) {
+    const W = document.documentElement.clientWidth;
+    const H = window.innerHeight;
+    const touch = navigator.maxTouchPoints > 0 || matchMedia("(pointer: coarse)").matches;
+    const issues = []; // { level: "!" | "~", kind, text }
+    const add = (level, kind, text) => issues.push({ level, kind, text });
+    const inScope = (r) => scope !== "viewport" || (r.bottom > 0 && r.top < H);
+
+    const els = [];
+    let scanned = 0;
+    for (const el of document.body.querySelectorAll("*")) {
+      if (++scanned > 8000) break;
+      if (LAYOUT_SKIP.has(el.tagName.toUpperCase()) || el === overlayHost) continue;
+      if (!isVisible(el)) continue;
+      const r = el.getBoundingClientRect();
+      if (!inScope(r)) continue;
+      if (r.right <= 0 || r.bottom + scrollY <= 0) continue; // parked off-page, like a skip link
+      els.push({ el, r, cs: getComputedStyle(el) });
+    }
+    const truncated = scanned > 8000;
+
+    // 1. Page wider than the screen: the element that sticks out of a parent that fits.
+    const pageW = document.documentElement.scrollWidth;
+    if (pageW > W + 1) {
+      const culprits = [];
+      for (const { el, r, cs } of els) {
+        if (cs.position === "fixed") continue;
+        if (r.right <= W + 1 && r.left >= -1) continue;
+        if (clipsX(el)) continue;
+        const pr = el.parentElement?.getBoundingClientRect();
+        if (pr && pr.right > W + 1 && el.parentElement !== document.body) continue;
+        culprits.push(`${labelOf(el)} sticks out by ${px(Math.max(r.right - W, -r.left))}`);
+        if (culprits.length >= 4) break;
+      }
+      add("!", "overflow", `page is ${px(pageW - W)} wider than the screen (${px(pageW)} vs ${px(W)})` +
+        (culprits.length ? `: ${culprits.join("; ")}` : ""));
+    }
+
+    // 2. Text cut off by its box, or hidden in a horizontal scroller.
+    for (const { el, cs } of els) {
+      const ownText = [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim());
+      if (!ownText) continue;
+      const overX = el.scrollWidth - el.clientWidth;
+      const overY = el.scrollHeight - el.clientHeight;
+      if (overX > 1 && cs.overflowX === "hidden") {
+        add("!", "clipped", `text clipped: ${labelOf(el)} needs ${px(el.scrollWidth)}, has ${px(el.clientWidth)}` +
+          (cs.textOverflow === "ellipsis" ? " (shown with …)" : ""));
+      } else if (overX > 1 && (cs.overflowX === "auto" || cs.overflowX === "scroll")) {
+        add("~", "clipped", `text scrolls sideways: ${labelOf(el)} shows ${px(el.clientWidth)} of ${px(el.scrollWidth)}`);
+      } else if (overY > 2 && cs.overflowY === "hidden" && !/^-?webkit-box$/.test(cs.display)) {
+        add("!", "clipped", `text clipped: ${labelOf(el)} needs ${px(el.scrollHeight)} tall, has ${px(el.clientHeight)}`);
+      }
+    }
+
+    // 3. Clickable elements covering each other.
+    const targets = els.filter(({ el }) => isInteractiveEl(el));
+    const fixedish = new Set(targets.filter(({ el }) => pinned(el)).map(({ el }) => el));
+    for (let i = 0; i < targets.length; i++) {
+      for (let j = i + 1; j < targets.length; j++) {
+        const a = targets[i], b = targets[j];
+        if (a.el.contains(b.el) || b.el.contains(a.el)) continue;
+        if (fixedish.has(a.el) !== fixedish.has(b.el)) continue; // a sticky header over scrolled content
+        const w = Math.min(a.r.right, b.r.right) - Math.max(a.r.left, b.r.left);
+        const h = Math.min(a.r.bottom, b.r.bottom) - Math.max(a.r.top, b.r.top);
+        if (w <= 4 || h <= 4) continue;
+        const cx = Math.max(a.r.left, b.r.left) + w / 2;
+        const cy = Math.max(a.r.top, b.r.top) + h / 2;
+        const top = cy >= 0 && cy < H ? document.elementFromPoint(cx, cy) : null;
+        const [over, under] = top && (b.el === top || b.el.contains(top)) ? [b, a] : [a, b];
+        add("!", "overlap", `overlap: ${labelOf(over.el)} covers ${labelOf(under.el)} by ${size(w, h)}`);
+      }
+    }
+
+    // 4. Tap targets (WCAG 2.5.8: 24px minimum; 44px recommended on touch screens).
+    // A target under 24px still passes when a 24px square on its center touches no other target.
+    const spaced = (t) => {
+      const cx = (t.r.left + t.r.right) / 2;
+      const cy = (t.r.top + t.r.bottom) / 2;
+      const sq = { left: cx - 12, right: cx + 12, top: cy - 12, bottom: cy + 12 };
+      return !targets.some((o) => o !== t && !o.el.contains(t.el) && !t.el.contains(o.el) &&
+        o.r.left < sq.right && o.r.right > sq.left && o.r.top < sq.bottom && o.r.bottom > sq.top);
+    };
+    const smallOnTouch = [];
+    for (const t of targets) {
+      const { el, r } = t;
+      if (inlineInText(el) || el.tagName === "LABEL") continue;
+      const small = Math.min(r.width, r.height);
+      if (small < 24 && !spaced(t)) add("!", "target", `tap target too small and crowded: ${labelOf(el)} is ${size(r.width, r.height)} (minimum 24x24, or 24px of space)`);
+      else if (touch && small < 44) smallOnTouch.push(`${labelOf(el)} ${size(r.width, r.height)}`);
+    }
+    if (smallOnTouch.length) {
+      const shown = smallOnTouch.slice().sort((a, b) => parseInt(a.match(/x(\d+)px$/)?.[1] || 0) - parseInt(b.match(/x(\d+)px$/)?.[1] || 0)).slice(0, 6);
+      add("~", "target", `${smallOnTouch.length} tap targets under 44x44px on touch, smallest first: ${shown.join("; ")}` +
+        (smallOnTouch.length > shown.length ? `; and ${smallOnTouch.length - shown.length} more` : ""));
+    }
+
+    // 5. Text squeezed against, or sticking out of, a visible box.
+    for (const { el, r, cs } of els) {
+      if (r.width < 100 || r.height < 32 || r.width >= W - 2) continue; // full-width bars are edge to edge on purpose
+      if (!/^(block|flex|grid|flow-root|inline-block|list-item|inline-flex|inline-grid)$/.test(cs.display)) continue;
+      if (!hasBoundary(el, cs) || el === document.body || el === document.documentElement) continue;
+      if (cs.overflowX !== "visible" && el.scrollWidth > el.clientWidth + 1) continue; // a scroller, reported above
+      const c = textBox(el);
+      if (!c) continue;
+      const inset = { left: c.left - r.left, right: r.right - c.right, top: c.top - r.top, bottom: r.bottom - c.bottom };
+      const worst = Object.entries(inset).sort((x, y) => x[1] - y[1])[0];
+      if (worst[1] < -1) add("!", "padding", `content sticks out of ${labelOf(el)} on the ${worst[0]} by ${px(-worst[1])}`);
+      else if (worst[1] < 6 && /^(block|flex|grid|flow-root|list-item)$/.test(cs.display)) {
+        add("~", "padding", `tight padding: content of ${labelOf(el)} is ${px(worst[1])} from the ${worst[0]} edge`);
+      }
+    }
+
+    // 6. Uneven gaps between siblings in a row or a column.
+    const seen = new Set();
+    for (const { el } of els) {
+      const parent = el.parentElement;
+      if (!parent || seen.has(parent)) continue;
+      seen.add(parent);
+      if (/^(P|CODE|PRE|SPAN|A|LABEL|H[1-6]|STRONG|EM|B|I)$/.test(parent.tagName)) continue; // running text
+      const all = [...parent.children].filter((k) => !LAYOUT_SKIP.has(k.tagName.toUpperCase()) && isVisible(k) &&
+        !/^(absolute|fixed)$/.test(getComputedStyle(k).position));
+      // Only repeated items (cards, list items, buttons in a row): same tag and class.
+      const kindOf = (k) => `${k.tagName}.${typeof k.className === "string" ? k.className.trim() : ""}`;
+      const counts = new Map();
+      for (const k of all) counts.set(kindOf(k), (counts.get(kindOf(k)) || 0) + 1);
+      const [kind, n] = [...counts].sort((a, b) => b[1] - a[1])[0] || [];
+      if (!kind || n < 3) continue;
+      const gaps = { across: [], down: [] };
+      for (let i = 1; i < all.length; i++) {
+        // Only neighbours that are both repeated items.
+        if (kindOf(all[i - 1]) !== kind || kindOf(all[i]) !== kind) continue;
+        const a = all[i - 1].getBoundingClientRect(), b = all[i].getBoundingClientRect();
+        if (Math.abs(a.top - b.top) < 2 && b.left >= a.right - 1) gaps.across.push(b.left - a.right);
+        else if (Math.abs(a.left - b.left) < 2 && b.top >= a.bottom - 1) gaps.down.push(b.top - a.bottom);
+      }
+      for (const [dir, list] of Object.entries(gaps)) {
+        if (list.length < 2) continue;
+        const spread = Math.max(...list) - Math.min(...list);
+        if (spread > 4) {
+          add("~", "spacing", `uneven gaps ${dir} in ${labelOf(parent)}: ${list.map((g) => Math.round(g)).join(", ")}px`);
+        }
+      }
+    }
+
+    const order = { overflow: 0, overlap: 1, clipped: 2, padding: 3, target: 4, spacing: 5 };
+    issues.sort((a, b) => (a.level === b.level ? 0 : a.level === "!" ? -1 : 1) || order[a.kind] - order[b.kind]);
+    const shown = issues.slice(0, Math.max(1, Math.min(Number(limit) || 40, 200)));
+    const head = `layout at ${W}x${H}${touch ? " (touch)" : ""}, ${scope === "viewport" ? "on screen" : "whole page"}: ` +
+      (issues.length ? `${issues.filter((i) => i.level === "!").length} problems, ${issues.filter((i) => i.level === "~").length} warnings` : "no problems found");
+    const lines = shown.map((i) => `${i.level} ${i.text}`);
+    if (issues.length > shown.length) lines.push(`... ${issues.length - shown.length} more`);
+    if (truncated) lines.push("note: very large page, only the first 8000 elements were checked");
+    return [head, ...lines].join("\n");
+  }
+
   // ------------------------------------------------------------ tab badge ---
   // Chrome can't style a tab title, so mark the agent's tab with a text
   // prefix. The human can find the tab the agent is using without the agent
@@ -884,6 +1133,8 @@
           case "pointer:hide":
             hide();
             return sendResponse({ ok: true });
+          case "pointer:layout":
+            return sendResponse({ ok: true, text: layoutReport(msg.params || {}) });
           case "pointer:text":
             return sendResponse({ ok: true, text: readableText(msg.params || {}) });
           case "pointer:scroll": {
