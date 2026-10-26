@@ -538,6 +538,8 @@
     const { items, above, below, truncated } = collect({ scope, hrefs });
     const head = [`url: ${safeUrl(location.href)}`, `title: ${oneLine(document.title, 200)}`];
     if (truncated) head.push("note: very large page, only the first 12000 elements were scanned");
+    const blocked = blockingNote(items);
+    if (blocked) head.push(blocked);
     if (scope === "viewport" && (above || below)) {
       const range = document.documentElement.scrollHeight - window.innerHeight;
       const pct = range > 0 ? Math.round((window.scrollY / range) * 100) : 0;
@@ -570,6 +572,8 @@
     if (!top.length) return `no element matches "${query}"`;
     const lines = top.map(({ it }) => it.line + (it.where === "in" ? "" : ` (${it.where})`));
     if (scored.length > top.length) lines.push(`... ${scored.length - top.length} weaker matches`);
+    const blocked = blockingNote(items);
+    if (blocked) lines.unshift(blocked);
     return lines.join("\n");
   }
 
@@ -641,6 +645,120 @@
       y: Math.round(r.top + r.height / 2),
       rect: { x: Math.round(r.left), y: Math.round(r.top), width: Math.round(r.width), height: Math.round(r.height) },
     };
+  }
+
+  // --------------------------------------------------------------- blockers ---
+  // A popup (newsletter modal, cookie wall, chat widget) can sit over the
+  // element the agent wants. A trusted click at that spot lands on the popup,
+  // so check what is really on top before clicking.
+  const MODAL = 'dialog[open],[role="dialog"],[role="alertdialog"],[aria-modal="true"]';
+  const CLOSE_WORDS =
+    /^(close|dismiss|not now|no,? thanks?|no thank you|maybe later|later|skip|cancel|continue without|x|×|✕|✖|╳)(?![a-z])/i;
+
+  /** The outermost fixed or sticky box around n: a layer floating over the page. */
+  function layerOf(n) {
+    let layer = null;
+    for (; n && n !== document.body && n !== document.documentElement; n = n.parentElement) {
+      const p = getComputedStyle(n).position;
+      if (p === "fixed" || p === "sticky") layer = n;
+    }
+    return layer;
+  }
+
+  /**
+   * What hides el at (x, y), or null when a click there reaches el. Only a
+   * dialog or a floating layer counts: a transparent input laid over a styled
+   * box in the same component still gets the click the agent meant.
+   */
+  function coverAt(el, x, y) {
+    const hit = document.elementFromPoint(x, y);
+    if (!hit || hit === el || el.contains(hit) || hit.contains(el)) return null;
+    if (hit.tagName === "LABEL" && hit.control === el) return null;
+    if (el.tagName === "LABEL" && el.control === hit) return null;
+    const modal = hit.closest(MODAL);
+    if (modal && !modal.contains(el)) return modal;
+    const layer = layerOf(hit);
+    if (layer && !layer.contains(el)) return layer;
+    return null;
+  }
+
+  const onScreen = (x, y) => x >= 0 && y >= 0 && x < window.innerWidth && y < window.innerHeight;
+
+  /** A point a click on el would really reach: the center, or another spot when only part of el is covered. */
+  function clickPoint(el) {
+    const { x, y } = center(el);
+    if (!onScreen(x, y)) return { x, y };
+    const cover = coverAt(el, x, y);
+    if (!cover) return { x, y };
+    const r = el.getBoundingClientRect();
+    const spots = [[0.5, 0.2], [0.5, 0.8], [0.2, 0.5], [0.8, 0.5], [0.15, 0.2], [0.85, 0.2], [0.15, 0.8], [0.85, 0.8]];
+    for (const [fx, fy] of spots) {
+      const px = Math.round(r.left + r.width * fx);
+      const py = Math.round(r.top + r.height * fy);
+      if (onScreen(px, py) && !coverAt(el, px, py)) return { x: px, y: py };
+    }
+    return { x, y, cover };
+  }
+
+  function boxName(box) {
+    const aria = box.getAttribute("aria-label");
+    if (aria?.trim()) return oneLine(aria, 60);
+    const by = box.getAttribute("aria-labelledby");
+    const labelled = by && by.split(/\s+/).map((id) => document.getElementById(id)?.innerText).filter(Boolean).join(" ");
+    if (labelled?.trim()) return oneLine(labelled, 60);
+    const heading = [...box.querySelectorAll("h1,h2,h3,h4,h5,h6,[role=heading]")].find(isVisible);
+    if (heading?.innerText.trim()) return oneLine(heading.innerText, 60);
+    return oneLine(box.innerText, 60);
+  }
+
+  /**
+   * Describe what covers the page and how to close it: { what, close }. A
+   * backdrop is often a sibling of its dialog, so name the open dialog then.
+   */
+  function blockerInfo(cover) {
+    let box = cover.matches(MODAL) ? cover : cover.querySelector(MODAL);
+    if (!box && !cover.querySelector(CANDIDATE)) {
+      box = [...document.querySelectorAll(MODAL)].filter(isVisible).pop() || null;
+    }
+    box = box || cover;
+    const kind = box.matches(MODAL) ? (box.getAttribute("role") === "alertdialog" ? "alertdialog" : "dialog") : "popup";
+    const name = boxName(box);
+    const what = `${kind}${name ? ` "${name}"` : ""} [ref=${refFor(box)}]`;
+    let close = null;
+    for (const scope of new Set([box, cover])) {
+      for (const n of scope.querySelectorAll(CANDIDATE)) {
+        const d = describe(n);
+        if (!d || !ACTIONABLE.has(d.role)) continue;
+        const label = `${d.name} ${n.getAttribute("title") || ""} ${n.className?.baseVal ?? n.className ?? ""}`;
+        if (CLOSE_WORDS.test(d.name.trim()) || /\b(close|dismiss)\b/i.test(label)) {
+          close = `${refFor(n)}${d.name ? ` "${oneLine(d.name, 40)}"` : ""}`;
+          break;
+        }
+      }
+      if (close) break;
+    }
+    const how = close ? `close it first: click ${close} (or press Escape)` : "close it first (press Escape, or snapshot to find its close button)";
+    return { what, how };
+  }
+
+  /** One note for the top of a snapshot when a popup covers what is in view. */
+  function blockingNote(items) {
+    const counts = new Map();
+    let checked = 0;
+    for (const it of items) {
+      if (it.where !== "in") continue;
+      if (++checked > 300) break;
+      const { x, y } = center(it.el);
+      if (!onScreen(x, y)) continue;
+      const cover = coverAt(it.el, x, y);
+      if (cover) counts.set(cover, (counts.get(cover) || 0) + 1);
+    }
+    let top = null;
+    let n = 0;
+    for (const [cover, k] of counts) if (k > n) [top, n] = [cover, k];
+    if (!top || (n < 3 && n * 2 < checked)) return null;
+    const { what, how } = blockerInfo(top);
+    return `blocked: ${what} covers ${n} element${n === 1 ? "" : "s"} in view; clicks there land on it. To use the page behind it, ${how}.`;
   }
 
   function resolve(params) {
@@ -1105,9 +1223,18 @@
             }
             scrollIntoView(el);
             await sleep(60);
-            const { x, y, rect } = center(el);
+            const { rect } = center(el);
             if (rect.width < 1 || rect.height < 1) {
               throw new Error("That element has no size on screen, so there is nothing to click. Pick another ref.");
+            }
+            const { x, y, cover } = clickPoint(el);
+            if (cover) {
+              const { what, how } = blockerInfo(cover);
+              const name = oneLine(nameOf(el), 40);
+              throw new Error(
+                `${refFor(el)}${name ? ` "${name}"` : ""} is covered by ${what}, so the input would land on it. ` +
+                  `Nothing was done; ${how}.`
+              );
             }
             return sendResponse({
               ok: true, x, y, rect, role: roleOf(el), name: nameOf(el).slice(0, 80),

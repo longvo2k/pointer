@@ -205,8 +205,15 @@ show up too, so the agent sees "Saved" or "Pick a plan to continue" without anot
 A few that need explaining:
 
 - `tab_open` opens a background tab. `tab_select` switches the agent's working tab without bringing it
-  forward. Only `tab_focus` brings a tab to the front. `tab_close` closes only tabs the agent opened;
-  your own tabs stay open even if the agent worked in them.
+  forward. Only `tab_focus` (or `tab_open` with `focus: true`) brings a tab to the front, which
+  interrupts you, so agents use it only when you ask to watch. `tab_close` closes only tabs the agent
+  opened, including tabs its clicks opened (`target="_blank"` links, popups); your own tabs stay open
+  even if the agent worked in them.
+- A tab opened by the agent's click opens in the background: Pointer gives you back the tab and
+  window you were on, puts the new tab in the agent's group, and `click` reports `opened tab <id>`.
+- `click`, `hover`, and `fill` check that nothing covers the element first. If a popup or its
+  backdrop is in the way, they do nothing and say what covers it and which ref closes it, instead of
+  clicking the popup. `snapshot` and `find` flag such a popup at the top of their output.
 - `hover` moves the pointer onto an element without clicking, to open hover menus and tooltips, and
   reports what appeared.
 - `navigate` goes back, forward, or reloads the agent's tab and returns the new view.
@@ -231,7 +238,7 @@ A few that need explaining:
 ### CLI
 
 ```bash
-pointer open https://example.com      # background tab; --focus to bring it forward
+pointer open https://example.com      # background tab; --focus brings it forward (interrupts you)
 pointer snap                          # --all for the whole page, --hrefs for link targets
 pointer find "sign up"
 pointer click e14

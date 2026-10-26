@@ -847,7 +847,107 @@ async function withTabLock(tabId, fn) {
 }
 
 async function withBackgroundInput(tab, fn) {
-  return withTabLock(tab.id, () => backgroundInput(tab, fn));
+  return withTabLock(tab.id, async () => {
+    const input = await beginAgentInput(tab);
+    try {
+      return await backgroundInput(tab, fn);
+    } finally {
+      endAgentInput(tab.id, input);
+    }
+  });
+}
+
+// ------------------------------------------------------- tabs from clicks ---
+// A click on a target="_blank" link (or a page's window.open) makes a tab the
+// agent caused but did not open with tab_open. Such a tab is the agent's: it
+// joins the group, tab_close can close it, and it must not take focus from
+// the human. Only a tab opened by the agent's tab during, or just after, the
+// agent's own input counts, so links the human opens are never touched.
+const SPAWN_GRACE_MS = 4000;
+const agentInputs = new Map(); // tabId -> { windowId, start, until, active, focusedWindow, spawned: [] }
+
+async function beginAgentInput(tab) {
+  const [active] = await chrome.tabs.query({ active: true, windowId: tab.windowId }).catch(() => []);
+  const focused = await chrome.windows.getLastFocused().catch(() => null);
+  const input = {
+    windowId: tab.windowId,
+    start: Date.now(),
+    until: Infinity,
+    active: active?.id ?? null,
+    focusedWindow: focused?.focused ? focused.id : null,
+    spawned: [],
+  };
+  agentInputs.set(tab.id, input);
+  return input;
+}
+
+function endAgentInput(tabId, input) {
+  input.until = Date.now() + SPAWN_GRACE_MS;
+  setTimeout(() => {
+    if (agentInputs.get(tabId) === input) agentInputs.delete(tabId);
+  }, SPAWN_GRACE_MS + 50);
+}
+
+/** The agent input that a new tab came from, if any. */
+function inputFor(tab) {
+  const now = Date.now();
+  if (tab.openerTabId != null) {
+    const input = agentInputs.get(tab.openerTabId);
+    return input && now <= input.until ? { opener: tab.openerTabId, input } : null;
+  }
+  // Chrome leaves out the opener for some popups; accept a tab in the agent's
+  // window only while a click is still in flight there. A blank new tab is the
+  // human pressing Cmd/Ctrl+T, never a link.
+  const url = tab.pendingUrl || tab.url || "";
+  if (!url || /^chrome:\/\/new-?tab|^about:blank/i.test(url)) return null;
+  for (const [opener, input] of agentInputs) {
+    if (input.windowId === tab.windowId && input.until === Infinity) return { opener, input };
+  }
+  return null;
+}
+
+chrome.tabs.onCreated.addListener((tab) => {
+  const from = inputFor(tab);
+  if (!from) return;
+  adoptSpawnedTab(tab, from).catch((err) => trace("adopt failed", err?.message || String(err)));
+});
+
+async function adoptSpawnedTab(tab, { opener, input }) {
+  await restored;
+  openedTabs.add(tab.id);
+  markedTabs.add(tab.id);
+  saveState();
+  input.spawned.push({ tabId: tab.id, url: tab.pendingUrl || tab.url || "" });
+  trace("adopted tab", tab.id, "from", opener);
+  // Give the human back the tab and window they had. Chrome may activate the
+  // tab just after it is created, so look again after a moment.
+  await keepFocus(tab, input);
+  setTimeout(() => keepFocus(tab, input).catch(() => {}), 150);
+  await ensureAgentGroup(tab.id).catch(() => {});
+}
+
+async function keepFocus(tab, input) {
+  const now = await chrome.tabs.get(tab.id).catch(() => null);
+  if (!now) return;
+  if (now.active && input.active != null && input.active !== tab.id) {
+    if (now.windowId === input.windowId) await chrome.tabs.update(input.active, { active: true }).catch(() => {});
+  }
+  if (input.focusedWindow != null && now.windowId !== input.focusedWindow) {
+    const win = await chrome.windows.get(now.windowId).catch(() => null);
+    if (win?.focused) await chrome.windows.update(input.focusedWindow, { focused: true }).catch(() => {});
+  }
+}
+
+/** Tabs the input now running in this tab has opened (call it inside withBackgroundInput). */
+async function spawnedTabs(tabId) {
+  const input = agentInputs.get(tabId);
+  if (!input) return [];
+  const out = [];
+  for (const s of input.spawned) {
+    const t = await chrome.tabs.get(s.tabId).catch(() => null);
+    if (t) out.push({ tabId: t.id, url: t.pendingUrl || t.url || s.url });
+  }
+  return out;
 }
 
 async function backgroundInput(tab, fn) {
@@ -1295,6 +1395,7 @@ async function dispatch(method, params) {
           y: spot.y,
           changes,
           synthetic,
+          opened: await spawnedTabs(tab.id),
         };
       });
     }
@@ -1342,7 +1443,7 @@ async function dispatch(method, params) {
         }
         await sleep(params.submit ? 240 : 120);
         const changes = await collectChanges(tab.id, docId);
-        return { ok: true, target: label, url: (await chrome.tabs.get(tab.id)).url, changes, synthetic };
+        return { ok: true, target: label, url: (await chrome.tabs.get(tab.id)).url, changes, synthetic, opened: await spawnedTabs(tab.id) };
       });
     }
 
@@ -1367,7 +1468,7 @@ async function dispatch(method, params) {
         }
         await sleep(240);
         const changes = await collectChanges(tab.id, docId);
-        return { ok: true, key: params.key || "Enter", url: (await chrome.tabs.get(tab.id)).url, changes, synthetic };
+        return { ok: true, key: params.key || "Enter", url: (await chrome.tabs.get(tab.id)).url, changes, synthetic, opened: await spawnedTabs(tab.id) };
       });
     }
 
