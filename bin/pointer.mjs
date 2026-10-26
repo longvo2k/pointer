@@ -19,6 +19,7 @@
  *   pointer shot [path]      screenshot (saves PNG, prints path)
  *   pointer viewport mobile  emulate a screen size (tablet, desktop, W H, reset)
  *   pointer layout           check spacing, overflow, overlaps, tap targets
+ *   pointer say <text>       caption for a human watching the tab (--step, --for, --ref, --clear)
  *   pointer stop             hide the pointer and stop
  *   pointer resume           continue after a human stop (ask first)
  *   pointer setup            show install paths and open chrome://extensions
@@ -39,7 +40,19 @@ const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const argv = process.argv.slice(2);
 const jsonOut = argv.includes("--json");
 const args = argv.filter((a) => a !== "--json");
-const [cmd, ...rest] = args;
+const [cmd, ...given] = args;
+
+/** Take `--name value` out of the arguments; actions accept `--say "..."` anywhere. */
+function takeOpt(list, name) {
+  const i = list.indexOf(name);
+  if (i < 0) return undefined;
+  if (i + 1 >= list.length) throw new Error(`${name} needs a value`);
+  return list.splice(i, 2)[1];
+}
+
+const rest = [...given];
+const say = takeOpt(rest, "--say");
+const narration = say != null ? { say } : {};
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -254,12 +267,12 @@ async function main() {
     case "click": {
       if (!rest[0]) throw new Error("Usage: pointer click <ref|selector>");
       const target = /^@?e\d+$/.test(rest[0]) ? { ref: rest[0] } : { selector: rest[0] };
-      return print((await tool("click", target)).text);
+      return print((await tool("click", { ...target, ...narration })).text);
     }
     case "hover": {
       if (!rest[0]) throw new Error("Usage: pointer hover <ref|selector>");
       const target = /^@?e\d+$/.test(rest[0]) ? { ref: rest[0] } : { selector: rest[0] };
-      return print((await tool("hover", target)).text);
+      return print((await tool("hover", { ...target, ...narration })).text);
     }
     case "back":
     case "forward":
@@ -272,13 +285,13 @@ async function main() {
     case "type": {
       if (!rest[0]) throw new Error("Usage: pointer fill <ref|selector> <text>");
       const target = /^@?e\d+$/.test(rest[0]) ? { ref: rest[0] } : { selector: rest[0] };
-      return print((await tool("fill", { ...target, text: rest.slice(1).join(" ") })).text);
+      return print((await tool("fill", { ...target, text: rest.slice(1).join(" "), ...narration })).text);
     }
     case "press":
-      return print((await tool("press", { key: rest.join(" ") || "Enter" })).text);
+      return print((await tool("press", { key: rest.join(" ") || "Enter", ...narration })).text);
     case "scroll":
       return print(
-        (await tool("scroll", { direction: rest[0] || "down", amount: rest[1] ? Number(rest[1]) : undefined })).text
+        (await tool("scroll", { direction: rest[0] || "down", amount: rest[1] ? Number(rest[1]) : undefined, ...narration })).text
       );
     case "text":
     case "read":
@@ -287,8 +300,8 @@ async function main() {
       return print((await tool("wait_for", /^\d+$/.test(rest[0] || "") ? { ms: Number(rest[0]) } : { text: rest.join(" ") })).text);
     case "shot":
     case "screenshot": {
-      const res = await tool("screenshot");
-      const path = rest[0] || `pointer-${Date.now()}.png`;
+      const res = await tool("screenshot", { caption: rest.includes("--caption") });
+      const path = rest.find((a) => a !== "--caption") || `pointer-${Date.now()}.png`;
       writeFileSync(path, Buffer.from(res.image.data, "base64"));
       return print(`saved ${path}`);
     }
@@ -339,6 +352,20 @@ async function main() {
         ).text
       );
     }
+    case "say":
+    case "caption": {
+      if (rest.includes("--clear")) return print((await tool("say", { clear: true })).text);
+      const step = takeOpt(rest, "--step");
+      const time = takeOpt(rest, "--for");
+      const ref = takeOpt(rest, "--ref");
+      if (time != null && !/^\d+(\.\d+)?s?$/.test(time)) throw new Error("--for takes seconds, e.g. --for 5s");
+      const text = rest.join(" ");
+      if (!text) throw new Error('Usage: pointer say "<text>" [--step 3/5] [--for 5s] [--ref e10] | pointer say --clear');
+      const target = ref == null ? {} : /^@?e\d+$/.test(ref) ? { ref } : { selector: ref };
+      return print(
+        (await tool("say", { text, step, seconds: time != null ? Number(time.replace(/s$/, "")) : undefined, ...target })).text
+      );
+    }
     case "stop":
       return print((await tool("stop")).text);
     case "resume":
@@ -372,14 +399,17 @@ function usage() {
   pointer press <key>
   pointer scroll [up|down] [px]
   pointer text                  page as readable text
-  pointer shot [path]           screenshot (pointer included)
+  pointer shot [path] [--caption]  screenshot (pointer included; the caption only with --caption)
   pointer viewport <preset|W H> emulate mobile, tablet, desktop, or W H [--mobile]; reset when done
   pointer layout [--screen]     find overflow, clipped text, overlaps, small targets, tight padding, uneven gaps
   pointer dialog accept|dismiss [text]  answer an alert/confirm/prompt
   pointer upload [ref] <file...>       attach files to a file input
   pointer console [errors|warnings|all] [--reload]
   pointer network [filter] [--failed] [--all] [--reload] [--body <id>]
-  pointer stop                  hide pointer, stop acting
+  pointer say "<text>" [--step 3/5] [--for 5s] [--ref e10]
+                                caption for a human watching the tab; pointer say --clear removes it
+  --say "<text>"                on click, hover, fill, press, scroll: caption the step first
+  pointer stop                  hide pointer and caption, stop acting
   pointer resume                continue after the human stopped the agent (ask them first)
   pointer setup [--no-open]     show install paths, open chrome://extensions
 

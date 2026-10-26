@@ -1,7 +1,7 @@
 // The tool layer: argument handling and the text agents read.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { TOOLS, normalizeUrl, formatChanges, formatOpened, resolveViewport, callTool } from "../lib/tools.mjs";
+import { TOOLS, normalizeUrl, formatChanges, formatOpened, resolveViewport, resolveCaption, callTool } from "../lib/tools.mjs";
 
 test("bare domains become https URLs; schemes are kept", () => {
   assert.equal(normalizeUrl("example.com"), "https://example.com");
@@ -193,4 +193,65 @@ test("formatOpened is empty when nothing opened", () => {
 
 test("focus is described as interrupting the human", () => {
   assert.match(TOOLS.find((t) => t.name === "tab_open").description, /interrupt/);
+});
+
+test("captions are one line, capped, and checked", () => {
+  assert.deepEqual(resolveCaption({ text: "  Step 3:\n play   the story ", step: " 3/5 ", seconds: 5, ref: "@e10" }), {
+    text: "Step 3: play the story", step: "3/5", seconds: 5, ref: "e10",
+  });
+  assert.deepEqual(resolveCaption({ clear: true, text: "ignored" }), { clear: true });
+  const long = resolveCaption({ text: "x".repeat(500) }).text;
+  assert.equal(long.length, 300);
+  assert.match(long, /…$/);
+  assert.throws(() => resolveCaption({ text: "  " }), /caption text/);
+  assert.throws(() => resolveCaption({ text: "hi", seconds: 0 }), /seconds/);
+  assert.throws(() => resolveCaption({ text: "hi", seconds: 9999 }), /seconds/);
+});
+
+test("say shows a caption, and clear removes it", async () => {
+  const calls = [];
+  const hub = {
+    call: async (method, params) => (
+      calls.push([method, params]),
+      params.clear ? { cleared: true } : { url: "http://localhost:3000/?token=abc", target: 'button "Play"' }
+    ),
+  };
+  const out = await callTool(hub, "say", { text: "Play a premium story", step: "3/5", ref: "e10" });
+  assert.deepEqual(calls[0], ["page.caption", { text: "Play a premium story", step: "3/5", ref: "e10" }]);
+  assert.match(out.text, /^showing caption \[3\/5\]: "Play a premium story" until replaced or cleared, outlining button "Play"/);
+  assert.match(out.text, /token=…/);
+  assert.equal((await callTool(hub, "say", { clear: true })).text, "caption cleared");
+  assert.deepEqual(calls[1], ["page.caption", { clear: true }]);
+});
+
+test("an action's say shows the caption before acting", async () => {
+  const calls = [];
+  const hub = {
+    call: async (method, params) => (
+      calls.push([method, params]),
+      { target: { role: "button", name: "Play" }, url: "https://x.test/", changes: { added: [], removed: [], changed: [], more: 0 } }
+    ),
+  };
+  await callTool(hub, "click", { ref: "e10", say: "Play the story; the preview stops at 15 seconds" });
+  assert.deepEqual(calls.map((c) => c[0]), ["page.caption", "page.act"]);
+  assert.deepEqual(calls[0][1], { text: "Play the story; the preview stops at 15 seconds" });
+  assert.deepEqual(calls[1][1], { ref: "e10", kind: "click" });
+
+  calls.length = 0;
+  await assert.rejects(callTool(hub, "hover", { say: "nothing to point at" }), /ref/);
+  assert.equal(calls.length, 0, "no caption when the action cannot run");
+
+  await callTool(hub, "press", { key: "Escape" });
+  assert.deepEqual(calls.map((c) => c[0]), ["page.press"]);
+  for (const name of ["click", "hover", "fill", "press", "scroll"]) {
+    assert.ok(TOOLS.find((t) => t.name === name).inputSchema.properties.say, `${name} takes say`);
+  }
+});
+
+test("screenshots leave the caption out unless asked", async () => {
+  const calls = [];
+  const hub = { call: async (method, params) => (calls.push([method, params]), { dataUrl: "data:image/png;base64,AAAA", url: "https://x.test/" }) };
+  await callTool(hub, "screenshot", {});
+  await callTool(hub, "screenshot", { caption: true });
+  assert.deepEqual(calls, [["page.screenshot", {}], ["page.screenshot", { caption: true }]]);
 });
