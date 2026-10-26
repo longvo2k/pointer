@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Pointer",
-  "version": "0.2.20",
+  "version": "0.2.21",
   "description": "Lets any MCP agent drive your real Chrome tab, with a visible pointer you can follow.",
   "icons": {
     "16": "icons/icon16.png",

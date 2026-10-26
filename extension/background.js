@@ -60,7 +60,7 @@ const GROUP_TITLE_MAX = 24;
 
 // Toggle when hunting a slow command; logs go to the extension worker console.
 const TRACE = false;
-const BUILD = "0.2.20";
+const BUILD = "0.2.21";
 const traceStart = Date.now();
 self.__pointerBuild = BUILD;
 function trace(...args) {
