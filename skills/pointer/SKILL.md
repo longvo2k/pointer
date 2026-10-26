@@ -126,7 +126,7 @@ Never guess a CSS selector when a ref exists.
 | Is the extension connected? | `browser_status` | `status` |
 | Open a page (background tab) | `tab_open` | `open <url>` |
 | See or switch tabs (without disturbing the human) | `tabs_list`, `tab_select` | `tabs`, `select <tabId>` |
-| Close your tabs when done | `tab_close` (`all: true`) | `close [tabId\|--all]` |
+| Close your tabs when done (including tabs your clicks opened) | `tab_close` (`all: true`) | `close [tabId\|--all]` |
 | Bring a tab forward (only if the human asks to watch) | `tab_focus` | `focus <tabId>` |
 | What is on screen, with refs | `snapshot` (`scope`, `hrefs`) | `snap [--all] [--hrefs]` |
 | Find an element anywhere on the page | `find` | `find <words>` |
@@ -166,6 +166,13 @@ Notes that save a round trip:
   at each viewport size, fix, and run it again; refs in its output work with `scroll` and `click`.
 - Actions do not bring the agent's tab to the front. If you need the human to watch, call
   `tab_focus` first; otherwise leave them where they are.
+- A click on a `target="_blank"` link or a popup opener reports `opened tab <id>`. The tab opens in
+  the background and is yours: `tab_select <id>` to work in it, and `tab_close` closes it.
+- If `click`, `hover`, or `fill` fails with `is covered by dialog "..."`, nothing was clicked: a popup
+  or its backdrop is over the element. Close it with the ref the error names (or `press Escape`),
+  then retry. `snapshot` and `find` start with a `blocked:` line while such a popup is open. A
+  newsletter or promo popup is fine to dismiss; say so in your report. Do not accept marketing or
+  sign up to close one.
 - Prefer MCP tools when they are registered. The CLI is the same bridge, so mixing them in one task
   is fine. `--json` on any CLI command returns machine-readable output.
 
@@ -242,7 +249,7 @@ Task: "Try the PAVE signup flow for me and stop before paying."
 
 ```bash
 ./scripts/pointer status                 # connected
-./scripts/pointer open paveinspect.com   # raises the tab
+./scripts/pointer open paveinspect.com   # background tab in the agent's group
 ./scripts/pointer snap                   # e3 = clickable "TRY PAVE"
 ./scripts/pointer click e3               # pointer moves, labels, clicks
 ./scripts/pointer snap                   # the form is now visible, refs changed

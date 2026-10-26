@@ -1,7 +1,7 @@
 // The tool layer: argument handling and the text agents read.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { TOOLS, normalizeUrl, formatChanges, resolveViewport, callTool } from "../lib/tools.mjs";
+import { TOOLS, normalizeUrl, formatChanges, formatOpened, resolveViewport, callTool } from "../lib/tools.mjs";
 
 test("bare domains become https URLs; schemes are kept", () => {
   assert.equal(normalizeUrl("example.com"), "https://example.com");
@@ -168,4 +168,29 @@ test("navigate goes back, forward, or reloads and shows the new view", async () 
   assert.match((await callTool(hub, "navigate", { action: "reload" })).text, /^reloaded/);
   await assert.rejects(callTool(hub, "navigate", { action: "home" }), /back.*forward.*reload/);
   assert.equal(calls.length, 2);
+});
+
+test("a click that opens a tab says so, and the tab is the agent's to close", async () => {
+  const hub = {
+    call: async () => ({
+      target: { role: "link", name: "App Store" },
+      url: "http://localhost:3000/",
+      changes: { added: [], removed: [], changed: [], more: 0 },
+      opened: [{ tabId: 1338345369, url: "https://apps.apple.com/app/id1?token=abc#x" }],
+    }),
+  };
+  const out = await callTool(hub, "click", { ref: "e10" });
+  assert.match(out.text, /opened tab 1338345369 in the background: https:\/\/apps\.apple\.com\/app\/id1\?token=…/);
+  assert.match(out.text, /tab_select 1338345369/);
+  assert.doesNotMatch(out.text, /abc/);
+  assert.match(TOOLS.find((t) => t.name === "tab_close").description, /clicks opened/);
+});
+
+test("formatOpened is empty when nothing opened", () => {
+  assert.equal(formatOpened(undefined), "");
+  assert.equal(formatOpened([]), "");
+});
+
+test("focus is described as interrupting the human", () => {
+  assert.match(TOOLS.find((t) => t.name === "tab_open").description, /interrupt/);
 });

@@ -4,7 +4,7 @@
  *
  *   pointer serve            run the local hub (the extension connects to it)
  *   pointer status           is the extension connected?
- *   pointer open <url>       open a background tab (--focus to bring it forward)
+ *   pointer open <url>       open a background tab (--focus brings it forward and interrupts the human)
  *   pointer tabs             list tabs
  *   pointer focus <tabId>
  *   pointer snap [--all] [--hrefs]  on-screen elements with refs
@@ -359,10 +359,10 @@ function usage() {
   pointer use <id>|auto         pin one Chrome profile, or follow the one you use
   pointer reload                reload every connected extension from disk
   pointer tabs                  list tabs
-  pointer open <url> [--focus]  open a background tab (--focus raises it)
+  pointer open <url> [--focus]  open a background tab (--focus raises it and interrupts the human)
   pointer select <tabId>        work in a tab without bringing it forward
-  pointer close [tabId|--all]   close the agent's tab(s)
-  pointer focus <tabId>         bring a tab forward
+  pointer close [tabId|--all]   close the agent's tab(s), including tabs its clicks opened
+  pointer focus <tabId>         bring a tab forward (interrupts the human; only when they ask)
   pointer snap [--all] [--hrefs] on-screen elements with refs
   pointer find <words>          search the whole page for elements
   pointer click <ref|selector>  move the pointer, then click
