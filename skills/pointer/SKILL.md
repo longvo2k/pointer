@@ -145,6 +145,7 @@ Never guess a CSS selector when a ref exists.
 | Attach files to an upload field | `upload` (ref, paths) | `upload [ref] <file...>` |
 | Debug the page: console errors | `console` (level, reload) | `console [errors\|all] [--reload]` |
 | Debug the page: requests, failures, bodies | `network` (filter, failed, body) | `network [text] [--failed] [--body id]` |
+| Narrate a demo for a human watching the tab | `say` (text, step, ref, seconds, clear), or `say` on an action | `say "<text>" [--step 3/5] [--ref e10] [--for 5s]`, `--say "<text>"` on an action |
 | Hide the pointer and stand down | `stop` | `stop` |
 | Continue after the human stopped you (only once they agree) | `resume` | `resume` |
 
@@ -173,6 +174,12 @@ Notes that save a round trip:
   then retry. `snapshot` and `find` start with a `blocked:` line while such a popup is open. A
   newsletter or promo popup is fine to dismiss; say so in your report. Do not accept marketing or
   sign up to close one.
+- When the human is watching the tab (a demo, a walkthrough, `open --focus`), narrate in the page,
+  not only in chat: `say` with the step and what to look for, or `say` on the action itself
+  (`click e10 --say "The preview stops at 15 seconds"`). Keep each caption to one or two short
+  sentences, put a counter in `step` when there is a plan, pass `ref` to outline what you describe,
+  and `say --clear` when the demo ends. Captions are left out of `screenshot` unless you pass
+  `caption: true`. Do not caption routine work nobody is watching.
 - Prefer MCP tools when they are registered. The CLI is the same bridge, so mixing them in one task
   is fine. `--json` on any CLI command returns machine-readable output.
 

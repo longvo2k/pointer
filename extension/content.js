@@ -36,7 +36,7 @@
     root.innerHTML = `
       <style>
         :host { all: initial; }
-        .glow, .arrow, .ripple, .label, .target {
+        .glow, .arrow, .ripple, .label, .target, .caption, .spot {
           position: fixed; pointer-events: none; box-sizing: border-box;
         }
         .glow {
@@ -74,6 +74,31 @@
           background: rgba(37,99,235,.06); opacity: 0;
           transition: opacity 120ms ease; pointer-events: none;
         }
+        /* A dark card with a light ring reads on light and dark pages alike. */
+        .caption {
+          left: 50%; bottom: 20px; width: max-content; max-width: min(760px, calc(100vw - 32px));
+          display: flex; align-items: baseline; gap: 10px; padding: 10px 16px;
+          border-radius: 12px; background: rgba(17,24,39,.94); color: #f9fafb;
+          font: 500 15px/1.45 ui-sans-serif, -apple-system, "Segoe UI", sans-serif;
+          box-shadow: 0 8px 28px rgba(0,0,0,.32), 0 0 0 1px rgba(255,255,255,.14);
+          opacity: 0; transform: translate(-50%, 6px);
+          transition: opacity 180ms ease, transform 180ms ease;
+        }
+        .caption.on { opacity: 1; transform: translate(-50%, 0); }
+        .caption.top { top: 20px; bottom: auto; }
+        .caption .step {
+          flex: none; padding: 1px 8px; border-radius: 999px; background: #2563eb; color: #fff;
+          font-size: 12.5px; font-weight: 600; letter-spacing: .02em;
+        }
+        .caption .step:empty { display: none; }
+        .caption .text {
+          overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical;
+          -webkit-line-clamp: 4; overflow: hidden;
+        }
+        .spot {
+          border: 2px solid rgba(37,99,235,.95); border-radius: 6px;
+          box-shadow: 0 0 0 4px rgba(37,99,235,.22); opacity: 0; transition: opacity 160ms ease;
+        }
       </style>
       <div class="glow"></div>
       <svg class="arrow" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
@@ -83,6 +108,8 @@
       <div class="ripple" style="display:none"></div>
       <div class="label"></div>
       <div class="target"></div>
+      <div class="spot"></div>
+      <div class="caption"><span class="step"></span><span class="text"></span></div>
     `;
     (document.documentElement || document.body).appendChild(host);
     overlayHost = host;
@@ -143,6 +170,7 @@
     ui.arrow.style.opacity = "0";
     if (ui.label) ui.label.classList.remove("on");
     if (ui.target) ui.target.style.opacity = "0";
+    clearCaption();
   }
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -158,6 +186,7 @@
       ui.x = x;
       ui.y = y;
       paint();
+      placeCaption();
       return Promise.resolve();
     }
 
@@ -177,6 +206,7 @@
           ui.y = y;
           paint();
         }
+        placeCaption();
         resolve();
       };
       // Hard stop for occluded windows where frames stop arriving.
@@ -241,6 +271,110 @@
     });
     clearTimeout(outline._t);
     outline._t = setTimeout(() => ui.target && (ui.target.style.opacity = "0"), 900);
+  }
+
+  // --------------------------------------------------------------- caption ---
+  // Narration for a human watching the tab: a card at the bottom (or the top,
+  // when the pointer or the outlined element sits under it) plus an outline
+  // that follows the element it describes.
+  const caption = { on: false, timer: 0, spotEl: null, frame: 0 };
+
+  function captionParts() {
+    initOverlay();
+    return { box: ui.root.querySelector(".caption"), spot: ui.root.querySelector(".spot") };
+  }
+
+  function showCaption({ text, step, until, ref, selector }) {
+    const target = ref || selector ? resolve({ ref, selector }) : null;
+    const { box } = captionParts();
+    box.querySelector(".step").textContent = step || "";
+    box.querySelector(".text").textContent = text || "";
+    box.style.visibility = "";
+    box.style.transition = document.visibilityState === "hidden" ? "none" : "";
+    box.classList.add("on");
+    caption.on = true;
+    clearTimeout(caption.timer);
+    if (until) caption.timer = setTimeout(clearCaption, Math.max(0, until - Date.now()));
+    trackSpot(target);
+    if (target) scrollIntoView(target);
+    placeSpot();
+    placeCaption();
+    return target ? `${roleOf(target) || "element"} "${oneLine(nameOf(target), 60)}"` : null;
+  }
+
+  function clearCaption() {
+    clearTimeout(caption.timer);
+    trackSpot(null);
+    if (!caption.on) return false;
+    caption.on = false;
+    const { box } = captionParts();
+    // Hidden tabs freeze CSS fades, so a screenshot would catch it half gone.
+    box.style.transition = document.visibilityState === "hidden" ? "none" : "";
+    box.classList.remove("on", "top");
+    return true;
+  }
+
+  /** Hide or restore the caption without clearing it, e.g. around a screenshot. */
+  function captionVisible(on) {
+    if (!caption.on) return;
+    const { box, spot } = captionParts();
+    box.style.visibility = on ? "" : "hidden";
+    spot.style.visibility = on ? "" : "hidden";
+  }
+
+  const onViewChange = () => {
+    if (caption.frame) return;
+    caption.frame = requestAnimationFrame(() => {
+      caption.frame = 0;
+      placeSpot();
+      placeCaption();
+    });
+  };
+
+  function trackSpot(el) {
+    const had = caption.spotEl;
+    caption.spotEl = el;
+    if (el && !had) {
+      window.addEventListener("scroll", onViewChange, { capture: true, passive: true });
+      window.addEventListener("resize", onViewChange, { passive: true });
+    } else if (!el && had) {
+      window.removeEventListener("scroll", onViewChange, { capture: true });
+      window.removeEventListener("resize", onViewChange);
+    }
+    if (!el && ui.root) {
+      const spot = ui.root.querySelector(".spot");
+      spot.style.opacity = "0";
+      spot.style.visibility = "";
+    }
+  }
+
+  function placeSpot() {
+    const el = caption.spotEl;
+    if (!el || !ui.root) return;
+    const spot = ui.root.querySelector(".spot");
+    if (!el.isConnected) {
+      spot.style.opacity = "0";
+      return;
+    }
+    const r = el.getBoundingClientRect();
+    const pad = 4;
+    Object.assign(spot.style, {
+      left: r.left - pad + "px",
+      top: r.top - pad + "px",
+      width: r.width + pad * 2 + "px",
+      height: r.height + pad * 2 + "px",
+      opacity: "1",
+    });
+  }
+
+  /** Move the card to the top when it would hide the pointer or the outlined element. */
+  function placeCaption() {
+    if (!caption.on || !ui.root) return;
+    const box = ui.root.querySelector(".caption");
+    const band = window.innerHeight - 20 - box.offsetHeight - 12;
+    const spot = caption.spotEl?.isConnected ? caption.spotEl.getBoundingClientRect() : null;
+    const under = (ui.shown && ui.y > band) || (spot && spot.bottom > band && spot.top < window.innerHeight);
+    box.classList.toggle("top", Boolean(under));
   }
 
   // ------------------------------------------------------------- elements ---
@@ -1259,6 +1393,14 @@
           }
           case "pointer:hide":
             hide();
+            return sendResponse({ ok: true });
+          case "pointer:caption": {
+            const p = msg.params || {};
+            if (p.off) return sendResponse({ ok: true, cleared: clearCaption() });
+            return sendResponse({ ok: true, target: showCaption(p) });
+          }
+          case "pointer:caption-visible":
+            captionVisible(Boolean(msg.params?.on));
             return sendResponse({ ok: true });
           case "pointer:layout":
             return sendResponse({ ok: true, text: layoutReport(msg.params || {}) });

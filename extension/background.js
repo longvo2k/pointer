@@ -22,16 +22,20 @@ const attached = new Set();
 const markedTabs = new Set();
 const openedTabs = new Set(); // tabs tab_open created; tab_close may close these
 const viewports = new Map(); // tabId -> emulated screen size, reapplied if the debugger reattaches
+const captions = new Map(); // tabId -> { text, step, until }, shown again after the page loads
 
 // The human's stop, the agent's own tabs and emulated sizes must survive the
 // service worker being suspended, so they live in session storage too.
 const restored = chrome.storage.session
-  .get(["pointerStopped", "pointerOpenedTabs", "pointerViewports"])
+  .get(["pointerStopped", "pointerOpenedTabs", "pointerViewports", "pointerCaptions"])
   .then((v) => {
     stopped = stopped || Boolean(v.pointerStopped);
     for (const id of v.pointerOpenedTabs || []) openedTabs.add(Number(id));
     for (const [id, size] of Object.entries(v.pointerViewports || {})) {
       if (!viewports.has(Number(id))) viewports.set(Number(id), size);
+    }
+    for (const [id, cap] of Object.entries(v.pointerCaptions || {})) {
+      if (!captions.has(Number(id))) captions.set(Number(id), cap);
     }
   })
   .catch(() => {});
@@ -42,6 +46,7 @@ function saveState() {
       pointerStopped: stopped,
       pointerOpenedTabs: [...openedTabs],
       pointerViewports: Object.fromEntries(viewports),
+      pointerCaptions: Object.fromEntries(captions),
     })
     .catch(() => {});
 }
@@ -213,6 +218,7 @@ connect();
  */
 function stopAgent(reason) {
   stopped = true;
+  clearCaptions().catch(() => {});
   saveState();
   unmarkTabs().catch(() => {});
   send({ event: "stop", reason: reason || "user" });
@@ -568,6 +574,7 @@ function forgetTab(tabId, { keepMarks = false } = {}) {
   captures.delete(tabId);
   if (!keepMarks) markedTabs.delete(tabId);
   if (!keepMarks) viewports.delete(tabId);
+  if (!keepMarks) captions.delete(tabId);
   if (!keepMarks) saveState();
 }
 
@@ -778,10 +785,34 @@ async function startCapture(tabId, kind) {
   return true;
 }
 // The content script (and its title badge) is replaced on navigation. Re-mark
-// tabs the agent owns once the new document is ready.
+// tabs the agent owns once the new document is ready, and bring back a caption
+// the agent is still showing there.
 chrome.tabs.onUpdated.addListener((tabId, info) => {
-  if (info.status === "complete" && markedTabs.has(tabId)) markTab(tabId);
+  if (info.status !== "complete") return;
+  if (markedTabs.has(tabId)) markTab(tabId);
+  const cap = captions.get(tabId);
+  if (cap && !stopped) {
+    if (cap.until && cap.until <= Date.now()) {
+      captions.delete(tabId);
+      saveState();
+    } else {
+      page(tabId, "pointer:caption", cap).catch(() => {});
+    }
+  }
 });
+
+/** Take every caption down, e.g. when the human stops the agent. */
+async function clearCaptions() {
+  const live = [...captions.keys()].filter((id) => {
+    const until = captions.get(id).until;
+    return !until || until > Date.now();
+  });
+  const ids = [...captions.keys()];
+  captions.clear();
+  saveState();
+  await Promise.all(ids.map((id) => page(id, "pointer:caption", { off: true }).catch(() => {})));
+  return live.length > 0;
+}
 
 async function cdp(tabId, method, params) {
   if (stopped && method.startsWith("Input.")) throw new Error(STOP_MESSAGE);
@@ -1251,8 +1282,11 @@ async function dispatch(method, params) {
         closed.push(id);
       }
       saveState();
-      // The human's own tabs the agent worked in lose the badge and group.
-      if (params.all) await unmarkTabs().catch(() => {});
+      // The human's own tabs the agent worked in lose the badge, group and caption.
+      if (params.all) {
+        await clearCaptions().catch(() => {});
+        await unmarkTabs().catch(() => {});
+      }
       return { closed };
     }
 
@@ -1610,59 +1644,41 @@ async function dispatch(method, params) {
       assertNoDialog(tab.id);
       await prepareTab(tab);
       await markTab(tab.id);
-      await sleep(120);
-      const format = params.format || "png";
-      trace("shot start");
-      let dataUrl = null;
-      // captureVisibleTab grabs whatever tab is visible in that window, so it
-      // is only correct for the agent tab. If the human moved to another tab
-      // or app, render the agent tab with CDP instead.
-      const fresh = await chrome.tabs.get(tab.id);
-      const win = await chrome.windows.get(fresh.windowId).catch(() => null);
-      // An emulated screen size only shows up in a CDP capture.
-      const visible = fresh.active && win?.focused !== false && win?.state !== "minimized" && !viewports.has(fresh.id);
-      if (visible) {
-        try {
-          dataUrl = await withTimeout(
-            chrome.tabs.captureVisibleTab(fresh.windowId, {
-              format,
-              quality: params.quality,
-            }),
-            6000,
-            "Screenshot timed out (window hidden or occluded)."
-          );
-          trace("shot captured");
-        } catch (err) {
-          trace("shot fallback", err?.message || String(err));
-        }
+      // The caption is for the human watching; keep it out of the agent's view.
+      const hideCaption = captions.has(tab.id) && !params.caption;
+      if (hideCaption) await page(tab.id, "pointer:caption-visible", { on: false }).catch(() => {});
+      try {
+        await sleep(120);
+        return await captureTab(tab, params);
+      } finally {
+        if (hideCaption) await page(tab.id, "pointer:caption-visible", { on: true }).catch(() => {});
       }
-      if (!dataUrl) {
-        try {
-          const res = await cdp(fresh.id, "Page.captureScreenshot", {
-            format,
-            quality: format === "jpeg" ? params.quality : undefined,
-          });
-          dataUrl = `data:image/${format === "jpeg" ? "jpeg" : "png"};base64,${res.data}`;
-          trace("shot via cdp");
-        } catch (err) {
-          if (!debuggerBlocked(err)) throw err;
-          // Another extension's frame (a password manager popup) blocks CDP.
-          // If the tab is the visible one in its window, the window capture works.
-          if (fresh.active && win?.state !== "minimized" && !viewports.has(fresh.id)) {
-            dataUrl = await withTimeout(
-              chrome.tabs.captureVisibleTab(fresh.windowId, { format, quality: params.quality }),
-              6000,
-              "Screenshot timed out (window hidden or occluded)."
-            );
-          } else {
-            throw new Error(
-              "Chrome blocks screenshots of this background tab because another extension's frame (often a password " +
-                "manager popup) is on the page. Ask the human to close that popup, or bring the tab forward with tab_focus."
-            );
-          }
-        }
+    }
+
+    case "page.caption": {
+      if (params.clear) return { cleared: await clearCaptions() };
+      assertNotStopped();
+      const text = String(params.text || "").trim();
+      if (!text) throw new Error("Pass the caption text, or clear: true to remove it.");
+      const tab = await resolveTab(params);
+      lastTabId = tab.id;
+      assertNoDialog(tab.id);
+      await markTab(tab.id);
+      const seconds = Number(params.seconds);
+      const cap = {
+        text: text.slice(0, 300),
+        step: params.step ? String(params.step).slice(0, 24) : "",
+        until: seconds > 0 ? Date.now() + Math.min(seconds, 600) * 1000 : null,
+      };
+      const res = await page(tab.id, "pointer:caption", { ...cap, ref: params.ref, selector: params.selector });
+      // One caption at a time: it narrates the agent, in the tab it works in now.
+      for (const id of [...captions.keys()]) {
+        if (id !== tab.id) page(id, "pointer:caption", { off: true }).catch(() => {});
+        captions.delete(id);
       }
-      return { dataUrl, tabId: tab.id, url: tab.url };
+      captions.set(tab.id, cap);
+      saveState();
+      return { url: (await chrome.tabs.get(tab.id)).url, target: res.target || null };
     }
 
     case "page.viewport": {
@@ -1713,6 +1729,7 @@ async function dispatch(method, params) {
     case "page.hidePointer": {
       const tab = await resolveTab(params);
       await page(tab.id, "pointer:hide", {});
+      await clearCaptions();
       await unmarkTabs();
       return { ok: true };
     }
@@ -1740,6 +1757,62 @@ async function dispatch(method, params) {
     default:
       throw new Error(`Unknown method ${method}`);
   }
+}
+
+/** Capture a tab as an image: the window capture when it is on screen, CDP otherwise. */
+async function captureTab(tab, params) {
+  const format = params.format || "png";
+  trace("shot start");
+  let dataUrl = null;
+  // captureVisibleTab grabs whatever tab is visible in that window, so it
+  // is only correct for the agent tab. If the human moved to another tab
+  // or app, render the agent tab with CDP instead.
+  const fresh = await chrome.tabs.get(tab.id);
+  const win = await chrome.windows.get(fresh.windowId).catch(() => null);
+  // An emulated screen size only shows up in a CDP capture.
+  const visible = fresh.active && win?.focused !== false && win?.state !== "minimized" && !viewports.has(fresh.id);
+  if (visible) {
+    try {
+      dataUrl = await withTimeout(
+        chrome.tabs.captureVisibleTab(fresh.windowId, {
+          format,
+          quality: params.quality,
+        }),
+        6000,
+        "Screenshot timed out (window hidden or occluded)."
+      );
+      trace("shot captured");
+    } catch (err) {
+      trace("shot fallback", err?.message || String(err));
+    }
+  }
+  if (!dataUrl) {
+    try {
+      const res = await cdp(fresh.id, "Page.captureScreenshot", {
+        format,
+        quality: format === "jpeg" ? params.quality : undefined,
+      });
+      dataUrl = `data:image/${format === "jpeg" ? "jpeg" : "png"};base64,${res.data}`;
+      trace("shot via cdp");
+    } catch (err) {
+      if (!debuggerBlocked(err)) throw err;
+      // Another extension's frame (a password manager popup) blocks CDP.
+      // If the tab is the visible one in its window, the window capture works.
+      if (fresh.active && win?.state !== "minimized" && !viewports.has(fresh.id)) {
+        dataUrl = await withTimeout(
+          chrome.tabs.captureVisibleTab(fresh.windowId, { format, quality: params.quality }),
+          6000,
+          "Screenshot timed out (window hidden or occluded)."
+        );
+      } else {
+        throw new Error(
+          "Chrome blocks screenshots of this background tab because another extension's frame (often a password " +
+            "manager popup) is on the page. Ask the human to close that popup, or bring the tab forward with tab_focus."
+        );
+      }
+    }
+  }
+  return { dataUrl, tabId: tab.id, url: tab.url };
 }
 
 const HISTORY_ACTIONS = {

@@ -200,6 +200,7 @@ show up too, so the agent sees "Saved" or "Pick a plan to continue" without anot
 | Screen size and layout | `viewport`, `layout` |
 | Act | `click`, `hover`, `fill`, `press`, `scroll`, `navigate`, `upload`, `dialog` |
 | Debug | `console`, `network` |
+| Narrate | `say` |
 | Stop | `stop`, `resume` |
 
 A few that need explaining:
@@ -231,6 +232,11 @@ A few that need explaining:
   screen (and the element that causes it), clipped text, clickable elements covering each other, tap
   targets under 24px (or 44px on touch), text squeezed against or spilling out of its box, and uneven
   gaps between repeated items. Run it after `viewport mobile`, `tablet`, and `desktop`.
+- `say` shows a caption at the bottom of the agent's tab, so when an agent demos something you can
+  follow along in the browser instead of the terminal. It can carry a step counter (`3/5`), outline
+  the element it describes, and disappear after a few seconds. It stays across page loads, never
+  blocks clicks, is left out of screenshots (unless asked) and `layout`, and `stop` hides it.
+  `click`, `hover`, `fill`, `press`, and `scroll` take `say` too, to caption a step right before it.
 - `console` and `network` read the tab's errors and requests. Capture starts on the first call
   (`reload: true` captures a page load), because turning it on makes the debugger easier for anti-bot
   scripts to notice.
@@ -252,6 +258,9 @@ pointer network api --failed
 pointer shot out.png
 pointer viewport mobile                # also tablet, desktop, 390 844, reset
 pointer layout                         # overflow, clipped text, overlaps, tap targets, spacing
+pointer say "Play a premium story" --step 3/5 --ref e10   # caption for whoever watches the tab
+pointer click e10 --say "The preview stops at 15 seconds"  # caption, then click
+pointer say --clear
 pointer close --all                   # close the agent's tabs
 ```
 
@@ -309,7 +318,7 @@ agent (MCP or CLI)
  Chrome extension  ── chrome.debugger (trusted input)
       │
       ▼
- your tab  ── overlay: pointer, label, ripple, target outline
+ your tab  ── overlay: pointer, label, ripple, target outline, caption
 ```
 
 The code is split along the trust boundary:
