@@ -33,7 +33,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { Hub, health } from "../lib/hub.mjs";
-import { debug, timed } from "../lib/debug.mjs";
+import { debug, logTrace, timed, withDebug } from "../lib/debug.mjs";
 import { TOOLS, callTool } from "../lib/tools.mjs";
 
 const PORT = Number(process.env.POINTER_PORT || 8790);
@@ -88,10 +88,12 @@ async function rpcOnce(method, params) {
   const res = await fetch(`http://127.0.0.1:${PORT}/rpc`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ method, params }),
+    body: JSON.stringify({ method, params: withDebug(params) }),
   });
   const body = await res.json();
+  logTrace(method, body.ok ? body.result?._trace : body.trace);
   if (!body.ok) throw new Error(body.error);
+  if (body.result && typeof body.result === "object") delete body.result._trace;
   return body.result;
 }
 

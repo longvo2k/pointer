@@ -63,8 +63,14 @@ const TRACE = false;
 const BUILD = "0.2.22";
 const traceStart = Date.now();
 self.__pointerBuild = BUILD;
+// When the agent runs with POINTER_DEBUG, each call's trace goes back with its
+// result, so a slow step shows up in the agent's log, not only in this console.
+let callTrace = null;
 function trace(...args) {
   if (TRACE) console.log(`[pointer +${Date.now() - traceStart}ms]`, ...args);
+  if (callTrace && callTrace.lines.length < 200) {
+    callTrace.lines.push(`+${Date.now() - callTrace.start}ms ${args.join(" ")}`);
+  }
 }
 
 chrome.runtime.getPlatformInfo().then((info) => {
@@ -136,13 +142,24 @@ function connect() {
       return;
     }
     const started = Date.now();
+    const debug = msg.params?.debug === true;
+    if (debug) callTrace = { start: started, lines: [] };
+    const traced = () => {
+      const lines = debug && callTrace ? callTrace.lines : undefined;
+      if (debug) callTrace = null;
+      return lines;
+    };
     try {
       const result = await dispatch(msg.method, msg.params || {});
       trace("handled", msg.method, `${Date.now() - started}ms`);
-      sendOn({ id: msg.id, ok: true, result });
+      const lines = traced();
+      const out = lines && result && typeof result === "object" && !Array.isArray(result) ? { ...result, _trace: lines } : result;
+      sendOn({ id: msg.id, ok: true, result: out });
     } catch (err) {
       trace("failed", msg.method, `${Date.now() - started}ms`, err?.message || String(err));
-      sendOn({ id: msg.id, ok: false, error: err instanceof Error ? String(err.message) : "Command failed" });
+      const lines = traced();
+      const error = err instanceof Error ? String(err.message) : "Command failed";
+      sendOn({ id: msg.id, ok: false, error, ...(lines ? { trace: lines } : {}) });
     }
   });
 
@@ -1217,10 +1234,11 @@ async function takeBaseline(tabId) {
  * What changed on screen since the baseline. If the action started a page
  * load, wait for it so the report describes the new page.
  */
-async function collectChanges(tabId, docId, opts = {}) {
+async function collectChanges(tabId, docId, { loaded = false, ...opts } = {}) {
   if (!docId) return null;
   const tab = await chrome.tabs.get(tabId).catch(() => null);
-  if (tab?.status === "loading") await waitForLoad(tabId, 10000);
+  // `loaded`: the caller already waited for the page (see settle).
+  if (tab?.status === "loading" && !loaded) await waitForLoad(tabId, 10000);
   try {
     const { ok, ...report } = await page(tabId, "pointer:changes", { docId, ...opts });
     return report;
@@ -1499,8 +1517,8 @@ async function dispatch(method, params) {
         trace("act input done");
 
         // Give the page a beat to react so the report sees the result.
-        await settle(tab.id, nav, clampMs(params.settleMs, 240, 5000));
-        const changes = await collectChanges(tab.id, docId);
+        const navigated = await settle(tab.id, nav, clampMs(params.settleMs, 240, 5000));
+        const changes = await collectChanges(tab.id, docId, { loaded: navigated });
         const after = await chrome.tabs.get(tab.id);
         trace("act done");
         return {
@@ -1600,8 +1618,8 @@ async function dispatch(method, params) {
             throw err2;
           }
         }
-        await settle(tab.id, nav, params.submit ? 240 : 120, params.submit ? 800 : 150);
-        const changes = await collectChanges(tab.id, docId);
+        const navigated = await settle(tab.id, nav, params.submit ? 240 : 120, params.submit ? 800 : 150);
+        const changes = await collectChanges(tab.id, docId, { loaded: navigated });
         return { ok: true, target: label, url: (await chrome.tabs.get(tab.id)).url, changes, synthetic, opened: await spawnedTabs(tab.id) };
       });
     }
@@ -1636,7 +1654,7 @@ async function dispatch(method, params) {
           synthetic = true;
         }
         const navigated = await settle(tab.id, nav, 240, key === "Enter" ? 800 : 150);
-        const changes = await collectChanges(tab.id, docId);
+        const changes = await collectChanges(tab.id, docId, { loaded: navigated });
         return { ok: true, key, url: (await chrome.tabs.get(tab.id)).url, navigated, changes, synthetic, opened: await spawnedTabs(tab.id) };
       });
     }
@@ -2003,15 +2021,54 @@ async function settle(tabId, nav, ms, grace = 150) {
   return navigated;
 }
 
+/**
+ * Wait for the tab's page to load. Chrome reports "complete" only after every
+ * image, font and script has arrived, and some pages never get there (a file
+ * from a server that does not answer, an endless request). So once the new
+ * document is parsed, allow it READY_GRACE_MS more, then carry on.
+ */
+const READY_GRACE_MS = 2000;
+
 async function waitForLoad(tabId, timeout = 20000) {
   const start = Date.now();
+  let readySince = 0;
   while (Date.now() - start < timeout) {
     const tab = await chrome.tabs.get(tabId).catch(() => null);
     if (!tab) return;
     if (tab.status === "complete") {
+      if (Date.now() - start > 1000) trace("load waited", `${Date.now() - start}ms`);
       await sleep(250);
       return;
     }
+    // pendingUrl: the navigation has not committed, so the old page is still there.
+    if (!tab.pendingUrl && (await documentParsed(tabId))) {
+      readySince ||= Date.now();
+      if (Date.now() - readySince >= READY_GRACE_MS) {
+        trace("load still running after the page was ready; going on", `${Date.now() - start}ms`);
+        return;
+      }
+    } else {
+      readySince = 0;
+    }
     await sleep(120);
+  }
+  trace("load timed out", `${timeout}ms`);
+}
+
+/** True once the tab's document has been parsed (readyState past "loading"). */
+async function documentParsed(tabId) {
+  try {
+    const [r] = await withTimeout(
+      chrome.scripting.executeScript({
+        target: { tabId, frameIds: [0] },
+        injectImmediately: true,
+        func: () => document.readyState,
+      }),
+      1000,
+      "readyState check timed out"
+    );
+    return Boolean(r?.result) && r.result !== "loading";
+  } catch {
+    return false;
   }
 }
