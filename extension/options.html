@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pointer settings</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #ffffff;
+        --surface: #f6f6f8;
+        --border: #e4e4e9;
+        --line: #ececf0;
+        --text: #18181b;
+        --muted: #71717a;
+        --accent: #7c3aed;
+        --ok: #16a34a;
+        --warn: #d97706;
+        --off: #a1a1aa;
+        --danger: #dc2626;
+        --hover: #ececf0;
+        --switch-off: #d4d4d8;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #18181b;
+          --surface: #222226;
+          --border: #313137;
+          --line: #2c2c31;
+          --text: #f4f4f5;
+          --muted: #a1a1aa;
+          --accent: #a78bfa;
+          --ok: #22c55e;
+          --warn: #f59e0b;
+          --off: #71717a;
+          --danger: #ef4444;
+          --hover: #2c2c31;
+          --switch-off: #3f3f46;
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; background: var(--bg); color: var(--text);
+        font: 14px/1.45 ui-sans-serif, -apple-system, "Segoe UI", sans-serif;
+      }
+      .layout { display: grid; grid-template-columns: 210px minmax(0, 720px); gap: 0 40px; max-width: 1000px; margin: 0 auto; padding: 32px 24px 64px; }
+      nav { position: sticky; top: 32px; align-self: start; }
+      .brand { display: flex; gap: 10px; align-items: center; font-weight: 650; font-size: 16px; margin: 0 0 18px 8px; }
+      .logo { width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; background: var(--accent); color: #fff; }
+      nav a { display: block; padding: 6px 10px; border-radius: 7px; color: var(--muted); text-decoration: none; margin-bottom: 2px; }
+      nav a:hover { background: var(--hover); color: var(--text); }
+      nav .ver { margin: 22px 10px 0; font-size: 12px; color: var(--muted); }
+      main section { margin-bottom: 32px; scroll-margin-top: 24px; }
+      h2 { font-size: 17px; margin: 0 0 2px; }
+      .desc { color: var(--muted); font-size: 13px; margin: 0 0 12px; }
+      .card { border: 1px solid var(--border); border-radius: 12px; background: var(--bg); }
+      .row { display: flex; align-items: center; gap: 14px; padding: 12px 14px; border-top: 1px solid var(--line); }
+      .row:first-child { border-top: 0; }
+      .row .t { flex: 1; min-width: 0; }
+      .row .t b { display: block; font-weight: 600; }
+      .row .t span { color: var(--muted); font-size: 13px; }
+      .switch { position: relative; width: 36px; height: 20px; flex: none; }
+      .switch input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
+      .switch span { position: absolute; inset: 0; border-radius: 999px; background: var(--switch-off); transition: background 150ms; pointer-events: none; }
+      .switch span::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.25); transition: left 150ms; }
+      .switch input:checked + span { background: var(--accent); }
+      .switch input:checked + span::after { left: 18px; }
+      .switch input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+      .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; flex: none; }
+      .seg label { padding: 5px 12px; font-size: 13px; cursor: pointer; }
+      .seg input { position: absolute; opacity: 0; pointer-events: none; }
+      .seg label:has(input:checked) { background: var(--accent); color: #fff; }
+      .seg label:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: -2px; }
+      button.btn { border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 8px; padding: 6px 12px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; flex: none; }
+      button.btn:hover { background: var(--hover); }
+      button.btn:disabled { opacity: .5; cursor: default; }
+      kbd { font: 600 12px ui-monospace, SFMono-Regular, Menlo, monospace; padding: 1px 6px; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 5px; background: var(--surface); }
+      .status { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; font-size: 13px; flex: none; }
+      .status i { width: 8px; height: 8px; border-radius: 50%; background: var(--off); }
+      .status[data-state="connected"] i { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 22%, transparent); }
+      .status[data-state="stopped"] i { background: var(--warn); }
+      .sites .site { display: flex; align-items: center; gap: 10px; padding: 9px 14px; border-top: 1px solid var(--line); font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .sites .site:first-child { border-top: 0; }
+      .sites .site span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .sites .x { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 15px; padding: 2px 6px; border-radius: 6px; }
+      .sites .x:hover { background: var(--hover); color: var(--text); }
+      .empty { color: var(--muted); font-size: 13px; padding: 12px 14px; }
+      .add { display: flex; gap: 8px; padding: 12px 14px; border-top: 1px solid var(--line); }
+      .add input { flex: 1; min-width: 0; border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; background: var(--bg); color: var(--text); font: inherit; font-size: 13px; }
+      .add input:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; }
+      .error { color: var(--danger); font-size: 13px; margin: 8px 2px 0; min-height: 1em; }
+      .note { color: var(--muted); font-size: 13px; margin: 8px 2px 0; }
+      .saved { position: fixed; right: 20px; bottom: 20px; background: var(--text); color: var(--bg); padding: 8px 14px; border-radius: 10px; font-size: 13px; opacity: 0; transition: opacity 200ms; pointer-events: none; }
+      .saved.on { opacity: 1; }
+      [hidden] { display: none !important; }
+      @media (max-width: 720px) {
+        .layout { grid-template-columns: 1fr; padding: 20px 16px 48px; }
+        nav { position: static; }
+        nav .links { display: flex; flex-wrap: wrap; gap: 4px; }
+        nav .ver { margin-top: 8px; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="layout">
+      <nav>
+        <div class="brand">
+          <span class="logo" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M4 2.5 20 11l-7 2-3.5 7.5z"/></svg></span>
+          Pointer
+        </div>
+        <div class="links">
+          <a href="#general">General</a>
+          <a href="#page">On the page</a>
+          <a href="#notifications">Notifications</a>
+          <a href="#stopping">Stopping</a>
+          <a href="#sites">Sites</a>
+          <a href="#privacy">Privacy</a>
+        </div>
+        <div class="ver"><span id="version">Version</span><br /><span id="hub-address">Hub 127.0.0.1:8790</span></div>
+      </nav>
+
+      <main>
+        <section id="general">
+          <h2>Connection</h2>
+          <p class="desc">Pointer talks only to the hub on this computer.</p>
+          <div class="card">
+            <div class="row">
+              <div class="t"><b>Hub</b><span id="hub-text">Checking…</span></div>
+              <span class="status" id="hub-status" data-state="offline"><i></i><span id="hub-state">Offline</span></span>
+            </div>
+            <div class="row">
+              <div class="t"><b>Agent</b><span id="agent-text">No agent yet</span></div>
+              <button class="btn" id="show-tab" disabled>Show its tab</button>
+            </div>
+          </div>
+        </section>
+
+        <section id="page">
+          <h2>On the page</h2>
+          <p class="desc">What you see in a tab while an agent works in it. None of it shows up in the agent's screenshots.</p>
+          <div class="card">
+            <div class="row">
+              <div class="t"><b>Control bar</b><span>Who is working, the current step, and a Stop button</span></div>
+              <label class="switch"><input type="checkbox" data-key="bar" aria-label="Control bar" /><span></span></label>
+            </div>
+            <div class="row">
+              <div class="t"><b>Edge around the tab</b><span>A thin line that marks the agent's tab</span></div>
+              <label class="switch"><input type="checkbox" data-key="edge" aria-label="Edge around the tab" /><span></span></label>
+            </div>
+            <div class="row">
+              <div class="t"><b>Cursor speed</b><span>Watchable lets you follow each move; Fast skips most of the animation</span></div>
+              <div class="seg" role="radiogroup" aria-label="Cursor speed">
+                <label><input type="radio" name="cursorSpeed" value="watchable" />Watchable</label>
+                <label><input type="radio" name="cursorSpeed" value="fast" />Fast</label>
+              </div>
+            </div>
+            <div class="row">
+              <div class="t"><b>Action labels</b><span>"click · Sign up" next to the cursor</span></div>
+              <label class="switch"><input type="checkbox" data-key="labels" aria-label="Action labels" /><span></span></label>
+            </div>
+            <div class="row">
+              <div class="t"><b>Status in the tab-group title</b><span>⌛ working · ✋ needs you · ✅ done</span></div>
+              <label class="switch"><input type="checkbox" data-key="groupStatus" aria-label="Status in the tab-group title" /><span></span></label>
+            </div>
+          </div>
+        </section>
+
+        <section id="notifications">
+          <h2>Notifications</h2>
+          <p class="desc">Only when you are looking at another tab or app.</p>
+          <div class="card">
+            <div class="row">
+              <div class="t"><b>When the agent finishes</b></div>
+              <label class="switch"><input type="checkbox" data-key="notifyDone" data-notify aria-label="Notify when the agent finishes" /><span></span></label>
+            </div>
+            <div class="row">
+              <div class="t"><b>When the agent is stopped and waiting for you</b></div>
+              <label class="switch"><input type="checkbox" data-key="notifyStopped" data-notify aria-label="Notify when the agent is waiting" /><span></span></label>
+            </div>
+            <div class="row">
+              <div class="t"><b>Play a sound</b></div>
+              <label class="switch"><input type="checkbox" data-key="sound" aria-label="Play a sound" /><span></span></label>
+            </div>
+            <div class="row">
+              <div class="t"><b>Try it</b><span>Sends a test notification</span></div>
+              <button class="btn" id="test-notification">Test</button>
+            </div>
+          </div>
+          <p class="note" id="notify-note" hidden></p>
+        </section>
+
+        <section id="stopping">
+          <h2>Stopping</h2>
+          <p class="desc">Any of these stops the agent. It stays stopped until you tell it to continue. The popup's Stop button always works.</p>
+          <div class="card">
+            <div class="row">
+              <div class="t"><b>Keyboard shortcut</b><span>Works even when a page swallows Esc</span></div>
+              <span id="shortcut"><kbd>Alt</kbd> <kbd>Shift</kbd> <kbd>S</kbd></span>
+              <button class="btn" id="change-shortcut">Change</button>
+            </div>
+            <div class="row">
+              <div class="t"><b>Esc in the agent's tab</b></div>
+              <label class="switch"><input type="checkbox" data-key="escStops" aria-label="Esc stops the agent" /><span></span></label>
+            </div>
+            <div class="row">
+              <div class="t"><b>A click of yours in the agent's tab</b></div>
+              <label class="switch"><input type="checkbox" data-key="clickStops" aria-label="A click stops the agent" /><span></span></label>
+            </div>
+          </div>
+        </section>
+
+        <section id="sites">
+          <h2>Sites</h2>
+          <p class="desc">Agents can't open, read, or act on these. Good for banking, health, or admin pages.</p>
+          <div class="card sites">
+            <div id="site-list"></div>
+            <form class="add" id="add-site">
+              <input id="site-input" placeholder="example.com or example.com/admin/*" aria-label="Site to block" autocomplete="off" />
+              <button class="btn" type="submit">Block</button>
+            </form>
+          </div>
+          <p class="error" id="site-error" role="alert"></p>
+        </section>
+
+        <section id="privacy">
+          <h2>Privacy</h2>
+          <div class="card">
+            <div class="row"><div class="t"><b>Hidden from agents</b><span>Passwords, one-time codes, card numbers, and secret values in links</span></div></div>
+            <div class="row"><div class="t"><b>No outside servers</b><span>Pointer talks only to 127.0.0.1. No accounts, analytics, or telemetry.</span></div></div>
+          </div>
+        </section>
+      </main>
+    </div>
+    <div class="saved" id="saved" role="status">Saved</div>
+    <script type="module" src="options.js"></script>
+  </body>
+</html>

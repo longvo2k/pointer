@@ -82,5 +82,10 @@ q("stop").addEventListener("click", async () => {
   window.close();
 });
 
+q("settings").addEventListener("click", () => {
+  chrome.runtime.openOptionsPage();
+  window.close();
+});
+
 refresh();
 setInterval(refresh, 1000);

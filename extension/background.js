@@ -25,6 +25,7 @@ import {
   effectsOf,
   viewOf,
 } from "./presence.js";
+import { SETTINGS_KEY, withDefaults } from "./settings.js";
 
 const DEFAULT_PORT = 8790;
 const HUB_URL = `ws://127.0.0.1:${DEFAULT_PORT}/ext`;
@@ -43,16 +44,8 @@ const viewports = new Map(); // tabId -> emulated screen size, reapplied if the 
 const captions = new Map(); // tabId -> { text, step, until }, shown again after the page loads
 let presence = initialPresence(); // what the human sees: active, quiet, stopped, done (see presence.js)
 let commandsInFlight = 0;
-// The human's choices from the settings page.
-let settings = {
-  bar: true,
-  edge: true,
-  labels: true,
-  cursorSpeed: "watchable",
-  groupStatus: true,
-  escStops: true,
-  clickStops: true,
-};
+// The human's choices from the settings page; only that page writes them.
+let settings = withDefaults(undefined);
 
 // The human's stop, the agent's own tabs and emulated sizes must survive the
 // service worker being suspended, so they live in session storage too.
@@ -70,6 +63,21 @@ const restored = chrome.storage.session
     if (v.pointerPresence && presence.state === "idle") presence = { ...initialPresence(), ...v.pointerPresence };
   })
   .catch(() => {});
+
+const settingsLoaded = chrome.storage.local
+  .get(SETTINGS_KEY)
+  .then((v) => {
+    settings = withDefaults(v?.[SETTINGS_KEY]);
+  })
+  .catch(() => {});
+
+// A change on the settings page applies at once: titles and the agent's tab update.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== "local" || !changes[SETTINGS_KEY]) return;
+  settings = withDefaults(changes[SETTINGS_KEY].newValue);
+  refreshGroupLabels().catch(() => {});
+  pushPresence();
+});
 
 function saveState() {
   chrome.storage.session
@@ -1347,6 +1355,7 @@ function assertUploadable(file) {
  */
 async function dispatch(method, params) {
   await restored;
+  await settingsLoaded;
   const requestedAgent = String(params?.agent || "").trim();
   if (requestedAgent && requestedAgent !== agentName) {
     agentName = requestedAgent;
