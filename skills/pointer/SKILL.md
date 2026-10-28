@@ -165,6 +165,7 @@ Never guess a CSS selector when a ref exists.
 | Debug the page: console errors | `console` (level, reload) | `console [errors\|all] [--reload]` |
 | Debug the page: requests, failures, bodies | `network` (filter, failed, body) | `network [text] [--failed] [--body id]` |
 | Narrate a demo for a human watching the tab | `say` (text, step, ref, seconds, clear), or `say` on an action | `say "<text>" [--step 3/5] [--ref e10] [--for 5s]`, `--say "<text>"` on an action |
+| Mark the task finished | `say` (`done: true`, optional text) | `say --done ["<summary>"]` |
 | Hide the pointer and stand down | `stop` | `stop` |
 | Continue after the human stopped you (only once they agree) | `resume` | `resume` |
 
@@ -221,6 +222,10 @@ The tool makes actions easy. Judgment is still yours.
   until you call `resume`. Stop, summarize what happened, and ask how to proceed. Call `resume`
   (`./scripts/pointer resume`) only after the human says you may continue; never to get past a stop
   on your own.
+- **Say when you are done.** End every finished task with `say` `done: true` and a one-line summary as
+  its `text` (CLI: `./scripts/pointer say --done "Workspace created, invite link copied"`). The human
+  sees a done mark on the tab and, if they turned it on, a notification. Without it, Pointer can only
+  guess from a minute of silence.
 - **Clean up.** Close the tabs you opened with `tab_close` (`all: true`) when the task is done (it never
   closes the human's own tabs), unless
   the human wants to keep them. Don't open a fresh tab to retry something that failed; fix the cause.

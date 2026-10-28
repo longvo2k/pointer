@@ -8,6 +8,27 @@
  * React handlers and site-specific pointer checks.
  */
 
+import {
+  initialPresence,
+  describeCommand,
+  onCommand,
+  onSay,
+  onClearSay,
+  onExplicitDone,
+  stopAccepted,
+  onHumanStop,
+  onResume,
+  onTick,
+  onDismiss,
+  groupPrefix,
+  baseGroupTitle,
+  effectsOf,
+  viewOf,
+  notificationText,
+} from "./presence.js";
+import { SETTINGS_KEY, withDefaults } from "./settings.js";
+import { isBlockedUrl } from "./sites.js";
+
 const DEFAULT_PORT = 8790;
 const HUB_URL = `ws://127.0.0.1:${DEFAULT_PORT}/ext`;
 
@@ -23,11 +44,23 @@ const markedTabs = new Set();
 const openedTabs = new Set(); // tabs tab_open created; tab_close may close these
 const viewports = new Map(); // tabId -> emulated screen size, reapplied if the debugger reattaches
 const captions = new Map(); // tabId -> { text, step, until }, shown again after the page loads
+let presence = initialPresence(); // what the human sees: active, quiet, stopped, done (see presence.js)
+let commandsInFlight = 0;
+// The human's choices from the settings page; only that page writes them.
+let settings = withDefaults(undefined);
 
 // The human's stop, the agent's own tabs and emulated sizes must survive the
 // service worker being suspended, so they live in session storage too.
 const restored = chrome.storage.session
-  .get(["pointerStopped", "pointerOpenedTabs", "pointerViewports", "pointerCaptions"])
+  .get([
+    "pointerStopped",
+    "pointerOpenedTabs",
+    "pointerViewports",
+    "pointerCaptions",
+    "pointerPresence",
+    "pointerMarkedTabs",
+    "pointerAgentGroups",
+  ])
   .then((v) => {
     stopped = stopped || Boolean(v.pointerStopped);
     for (const id of v.pointerOpenedTabs || []) openedTabs.add(Number(id));
@@ -37,8 +70,33 @@ const restored = chrome.storage.session
     for (const [id, cap] of Object.entries(v.pointerCaptions || {})) {
       if (!captions.has(Number(id))) captions.set(Number(id), cap);
     }
+    if (v.pointerPresence && presence.state === "idle") presence = { ...initialPresence(), ...v.pointerPresence };
+    // The agent's tabs and groups, so a worker Chrome woke again can still retitle and clear them.
+    for (const id of v.pointerMarkedTabs || []) markedTabs.add(Number(id));
+    for (const [windowId, groupId] of Object.entries(v.pointerAgentGroups || {})) {
+      if (!agentGroups.has(Number(windowId))) agentGroups.set(Number(windowId), groupId);
+    }
   })
   .catch(() => {});
+
+const settingsLoaded = chrome.storage.local
+  .get(SETTINGS_KEY)
+  .then((v) => {
+    settings = withDefaults(v?.[SETTINGS_KEY]);
+  })
+  .catch(() => {});
+
+// Saved state and the human's settings are both back: every path that acts on
+// them after the worker wakes (commands, stops, alarms, page loads) waits for this.
+const ready = Promise.all([restored, settingsLoaded]);
+
+// A change on the settings page applies at once: titles and the agent's tab update.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== "local" || !changes[SETTINGS_KEY]) return;
+  settings = withDefaults(changes[SETTINGS_KEY].newValue);
+  refreshGroupLabels().catch(() => {});
+  pushPresence();
+});
 
 function saveState() {
   chrome.storage.session
@@ -47,6 +105,9 @@ function saveState() {
       pointerOpenedTabs: [...openedTabs],
       pointerViewports: Object.fromEntries(viewports),
       pointerCaptions: Object.fromEntries(captions),
+      pointerPresence: presence,
+      pointerMarkedTabs: [...markedTabs],
+      pointerAgentGroups: Object.fromEntries(agentGroups),
     })
     .catch(() => {});
 }
@@ -221,7 +282,10 @@ chrome.alarms.get("pointer-keepalive").then((alarm) => {
   if (!alarm) chrome.alarms.create("pointer-keepalive", { periodInMinutes: 0.5 });
 });
 chrome.alarms.onAlarm.addListener((a) => {
-  if (a.name === "pointer-keepalive") connect();
+  if (a.name === "pointer-keepalive") {
+    connect();
+    ready.then(() => applyPresence(onTick(presence, Date.now())));
+  }
 });
 chrome.runtime.onStartup.addListener(connect);
 chrome.runtime.onInstalled.addListener(connect);
@@ -233,12 +297,21 @@ connect();
  * keyboard shortcut). The stop holds until the agent calls resume, which it
  * should do only after the human agrees.
  */
-function stopAgent(reason) {
+const STOP_SOURCES = { escape: "esc", takeover: "click", bar: "bar", popup: "popup", shortcut: "shortcut" };
+
+async function stopAgent(reason) {
+  await ready;
+  // Esc, a click and the bar count only while the agent may be working; the
+  // popup and the shortcut always stop, even with no agent in sight.
+  const source = STOP_SOURCES[reason] || "popup";
+  if (!stopAccepted(presence, source)) return false;
   stopped = true;
   clearCaptions().catch(() => {});
   saveState();
-  unmarkTabs().catch(() => {});
+  // The tab group and badges stay (as "✋ name"), so the human can see who is waiting.
+  applyPresence(onHumanStop(presence, { now: Date.now() }));
   send({ event: "stop", reason: reason || "user" });
+  return true;
 }
 
 // A shortcut is handled by Chrome itself, so a page cannot swallow it the way
@@ -250,7 +323,31 @@ chrome.commands?.onCommand.addListener((command) => {
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || sender?.id !== chrome.runtime.id) return;
   if (msg.type === "pointer:stop") {
-    stopAgent(msg.reason);
+    stopAgent(msg.reason).then(
+      (accepted) => sendResponse({ ok: true, accepted }),
+      () => sendResponse({ ok: false })
+    );
+    return true;
+  }
+  if (msg.type === "pointer:test-notification") {
+    // The settings page's Test button: shown even while the human is looking.
+    watchNotificationClicks();
+    (async () => {
+      if (!(await canNotify())) return sendResponse({ ok: false });
+      await chrome.notifications.create("pointer-test", {
+        type: "basic",
+        iconUrl: "icons/icon128.png",
+        title: "Pointer notifications work",
+        message: "You'll see this when an agent finishes or needs you.",
+        silent: !settings.sound,
+      });
+      sendResponse({ ok: true });
+    })().catch(() => sendResponse({ ok: false }));
+    return true;
+  }
+  if (msg.type === "pointer:dismiss") {
+    // Got it on the stopped bar, or ✕ on a chip. Never resumes the agent.
+    ready.then(() => applyPresence(onDismiss(presence, Date.now())));
     sendResponse({ ok: true });
     return;
   }
@@ -299,7 +396,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 });
 
 // ------------------------------------------------------------------- tabs ----
-async function resolveTab(params = {}) {
+/**
+ * The tab a command acts on. Every tab command passes through here, so this is
+ * where sites the human blocked, and extension pages (the settings page), are
+ * refused. allowBlocked is only for the agent's own stop, which must always work.
+ */
+async function resolveTab(params = {}, { allowBlocked = false } = {}) {
+  const tab = await findTab(params);
+  if (!allowBlocked) {
+    assertNotExtensionPage(tab.url);
+    assertSiteAllowed(tab.url);
+  }
+  return tab;
+}
+
+async function findTab(params) {
   const id = params.tabId ?? lastTabId;
   if (id != null) {
     try {
@@ -313,6 +424,20 @@ async function resolveTab(params = {}) {
   const [any] = await chrome.tabs.query({});
   if (!any) throw new Error("No tab available. Open a page first.");
   return any;
+}
+
+const BLOCKED_MESSAGE = "This site is blocked in Pointer's settings. Ask the human to do this step.";
+
+const isBlocked = (url) => isBlockedUrl(String(url || ""), settings.blockedSites);
+
+/** Refuse a site the human listed on the settings page. */
+function assertSiteAllowed(url) {
+  if (isBlocked(url)) throw new Error(BLOCKED_MESSAGE);
+}
+
+/** Refuse extension pages, so an agent can never reach Pointer's settings. */
+function assertNotExtensionPage(url) {
+  if (String(url || "").startsWith("chrome-extension://")) throw new Error("Pointer cannot act on extension pages.");
 }
 
 /**
@@ -361,7 +486,8 @@ async function openBackgroundTab(url) {
 }
 
 function agentGroupTitle() {
-  return (agentName || "agent").trim().slice(0, GROUP_TITLE_MAX) || "agent";
+  const name = (agentName || "agent").trim().slice(0, GROUP_TITLE_MAX) || "agent";
+  return (settings.groupStatus ? groupPrefix(presence) : "") + name;
 }
 
 // Group operations touch shared state per window; serialize them so two tabs
@@ -395,8 +521,11 @@ async function ensureAgentGroup(tabId) {
       }
 
       const existing = await chrome.tabGroups.get(tab.groupId).catch(() => null);
-      if (existing && existing.title === title) {
+      if (existing && baseGroupTitle(existing.title) === baseGroupTitle(title)) {
         agentGroups.set(tab.windowId, tab.groupId);
+        saveState();
+        // It may still carry an old ⌛ ✋ ✅ from before the worker restarted.
+        if (existing.title !== title) await chrome.tabGroups.update(tab.groupId, { title }).catch(() => {});
         return tab.groupId;
       }
 
@@ -423,6 +552,7 @@ async function ensureAgentGroup(tabId) {
     }
 
     agentGroups.set(tab.windowId, groupId);
+    saveState();
     await chrome.tabGroups.update(groupId, { title, color: GROUP_COLOR }).catch(() => {});
     return groupId;
   });
@@ -441,6 +571,7 @@ async function ungroupAgentTabs() {
   return queueGroupOp(async () => {
     const groupIds = new Set(agentGroups.values());
     agentGroups.clear();
+    saveState();
     if (!groupIds.size) return;
     const tabs = await chrome.tabs.query({});
     const tabIds = tabs.filter((tab) => groupIds.has(tab.groupId)).map((tab) => tab.id);
@@ -471,7 +602,10 @@ async function groupSummary() {
  * title badge, e.g. group "Claude" + "Claude · PAVE Inspect".
  */
 async function markTab(tabId) {
-  markedTabs.add(tabId);
+  if (!markedTabs.has(tabId)) {
+    markedTabs.add(tabId);
+    saveState();
+  }
   await ensureAgentGroup(tabId).catch(() => {});
   try {
     await page(tabId, "pointer:mark", { label: agentName });
@@ -483,6 +617,7 @@ async function markTab(tabId) {
 async function unmarkTabs() {
   const tabs = [...markedTabs];
   markedTabs.clear();
+  saveState();
   await Promise.all(
     tabs.map((tabId) => page(tabId, "pointer:mark", { off: true }).catch(() => {}))
   );
@@ -877,9 +1012,21 @@ async function startCapture(tabId, kind) {
 // The content script (and its title badge) is replaced on navigation. Re-mark
 // tabs the agent owns once the new document is ready, and bring back a caption
 // the agent is still showing there.
-chrome.tabs.onUpdated.addListener((tabId, info) => {
+chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
   if (info.status !== "complete") return;
+  ready.then(() => afterLoad(tabId, tab));
+});
+
+function afterLoad(tabId, tab) {
+  // The agent's tab landed on a blocked site (a click, a redirect): draw nothing
+  // there; every further command on it is refused by resolveTab.
+  if (isBlocked(tab?.url) && (markedTabs.has(tabId) || tabId === presence.tabId)) {
+    page(tabId, "pointer:hide", {}).catch(() => {});
+    page(tabId, "pointer:presence", viewOf(initialPresence(), settings, agentName)).catch(() => {});
+    return;
+  }
   if (markedTabs.has(tabId)) markTab(tabId);
+  if (tabId === presence.tabId) pushPresence(tabId);
   const cap = captions.get(tabId);
   if (cap && !stopped) {
     if (cap.until && cap.until <= Date.now()) {
@@ -889,7 +1036,7 @@ chrome.tabs.onUpdated.addListener((tabId, info) => {
       page(tabId, "pointer:caption", cap).catch(() => {});
     }
   }
-});
+}
 
 /** Take every caption down, e.g. when the human stops the agent. */
 async function clearCaptions() {
@@ -1285,13 +1432,140 @@ function assertUploadable(file) {
   }
 }
 
+/**
+ * Every agent command passes through here: it counts as activity for the
+ * presence the human sees, then runs. After it finishes, presence follows the
+ * tab the agent ended up on (tab_open, tab_select) and restarts the
+ * "thinking" clock.
+ */
 async function dispatch(method, params) {
-  await restored;
+  await ready;
   const requestedAgent = String(params?.agent || "").trim();
   if (requestedAgent && requestedAgent !== agentName) {
     agentName = requestedAgent;
     refreshGroupLabels().catch(() => {});
   }
+  const counts = describeCommand(method, params || {}) !== null;
+  applyPresence(onCommand(presence, { method, params, tabId: params?.tabId ?? lastTabId, now: Date.now(), held: stopped }));
+  if (counts) commandsInFlight++;
+  try {
+    const result = await runCommand(method, params);
+    await assertResultNotBlocked(method, result);
+    return result;
+  } finally {
+    if (counts) {
+      commandsInFlight = Math.max(0, commandsInFlight - 1);
+      if (presence.state === "active") {
+        applyPresence({ ...presence, tabId: lastTabId ?? presence.tabId, lastActivityAt: Date.now() });
+      }
+    }
+  }
+}
+
+// Calls whose results never carry page content, or that must work anywhere.
+const NO_PAGE_RESULT = new Set(["ext.status", "ext.rename", "ext.reload", "ext.resume", "tabs.list", "tabs.close", "page.hidePointer", "page.caption"]);
+
+/**
+ * The block is checked before a command, but a click, Enter, history step or
+ * redirect can land on a blocked site during it. Then the result (a snapshot,
+ * the changes, the new URL and title) must not reach the agent.
+ */
+async function assertResultNotBlocked(method, result) {
+  if (NO_PAGE_RESULT.has(method) || !settings.blockedSites.length) return;
+  const tabId = result?.tabId ?? lastTabId;
+  if (tabId == null) return;
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  if (tab && isBlocked(tab.url)) {
+    throw new Error(
+      "That took the tab to a site blocked in Pointer's settings, so Pointer shows nothing from it. " +
+        "Ask the human to do this step."
+    );
+  }
+}
+
+/** Push the current presence to the tab it belongs to. */
+function pushPresence(tabId = presence.tabId) {
+  if (tabId == null) return;
+  const view = { ...viewOf(presence, settings, agentName), busy: commandsInFlight > 0 };
+  page(tabId, "pointer:presence", view).catch(() => {});
+}
+
+/**
+ * The one place presence changes. Side effects follow from the change: the
+ * old tab is cleared, group titles get their ⌛ ✋ ✅, marks go when a done or
+ * an unresumed stop expires, and the human may be notified.
+ */
+function applyPresence(next) {
+  const prev = presence;
+  if (next === prev) return;
+  presence = next;
+  saveState();
+  const fx = effectsOf(prev, next);
+  if (fx.clearTab != null) {
+    page(fx.clearTab, "pointer:presence", viewOf(initialPresence(), settings, agentName)).catch(() => {});
+  }
+  if (fx.unmark) unmarkTabs().catch(() => {});
+  else if (fx.retitle) refreshGroupLabels().catch(() => {});
+  pushPresence();
+  if (fx.notify) notifyFor(fx.notify).catch(() => {});
+}
+
+/** Is the human looking at the agent's tab right now (its window focused, the tab in front)? */
+async function humanIsWatching(tabId) {
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  if (!tab?.active) return false;
+  const win = await chrome.windows.getLastFocused({ windowTypes: ["normal"] }).catch(() => null);
+  return Boolean(win?.focused && win.id === tab.windowId);
+}
+
+async function canNotify() {
+  if (!chrome.notifications) return false; // absent until the human allows notifications
+  return chrome.permissions.contains({ permissions: ["notifications"] }).catch(() => false);
+}
+
+/**
+ * Tell the human the agent finished or is waiting for them: only if they turned
+ * it on, and only when they are not already looking at the agent's tab.
+ */
+async function notifyFor(kind) {
+  if (kind === "done" ? !settings.notifyDone : !settings.notifyStopped) return;
+  if (!(await canNotify())) return;
+  const tabId = presence.tabId;
+  if (tabId != null && (await humanIsWatching(tabId))) return;
+  const tab = tabId != null ? await chrome.tabs.get(tabId).catch(() => null) : null;
+  let host = "this page";
+  try {
+    if (tab?.url) host = new URL(tab.url).hostname.replace(/^www\./, "") || host;
+  } catch {}
+  const { title, message } = notificationText(kind, { agent: agentName, actions: presence.actions, host });
+  await chrome.notifications.create(`pointer-${kind}`, {
+    type: "basic",
+    iconUrl: "icons/icon128.png",
+    title,
+    message,
+    silent: !settings.sound,
+  });
+}
+
+/** Clicking a notification brings the agent's tab and window forward. */
+function watchNotificationClicks() {
+  if (!chrome.notifications || watchNotificationClicks.done) return;
+  watchNotificationClicks.done = true;
+  chrome.notifications.onClicked.addListener(async (id) => {
+    if (!id.startsWith("pointer-")) return;
+    chrome.notifications.clear(id).catch(() => {});
+    if (id === "pointer-test") return;
+    const tab = presence.tabId != null ? await chrome.tabs.get(presence.tabId).catch(() => null) : null;
+    if (!tab) return;
+    await chrome.tabs.update(tab.id, { active: true }).catch(() => {});
+    await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
+  });
+}
+watchNotificationClicks();
+// The API appears when the human grants the permission on the settings page.
+chrome.permissions?.onAdded?.addListener(() => watchNotificationClicks());
+
+async function runCommand(method, params) {
   switch (method) {
     case "ext.status":
       return {
@@ -1306,11 +1580,12 @@ async function dispatch(method, params) {
     case "tabs.list": {
       const tabs = await chrome.tabs.query({});
       return tabs
-        .filter((t) => t.url && !t.url.startsWith("chrome://"))
+        .filter((t) => t.url && !t.url.startsWith("chrome://") && !t.url.startsWith("chrome-extension://"))
         .map((t) => ({
           tabId: t.id,
-          title: t.title,
-          url: t.url,
+          // A blocked site is listed, but the agent never learns what is on it.
+          title: isBlocked(t.url) ? "(blocked site)" : t.title,
+          url: isBlocked(t.url) ? "" : t.url,
           active: t.active,
           agent: t.id === lastTabId,
           windowId: t.windowId,
@@ -1320,6 +1595,8 @@ async function dispatch(method, params) {
     case "tabs.select": {
       // Switch the agent's working tab without bringing it forward.
       const tab = await chrome.tabs.get(Number(params.tabId));
+      assertNotExtensionPage(tab.url);
+      assertSiteAllowed(tab.url);
       lastTabId = tab.id;
       await markTab(tab.id);
       return { tabId: tab.id, url: tab.url, title: tab.title };
@@ -1328,6 +1605,7 @@ async function dispatch(method, params) {
     case "tabs.open": {
       assertNotStopped();
       assertWebUrl(params.url || "about:blank");
+      assertSiteAllowed(params.url);
       // Open in the background, like Claude in Chrome: the human stays on the
       // tab and window (or profile) they are using. Only an explicit
       // focus: true brings the new tab forward.
@@ -1350,6 +1628,8 @@ async function dispatch(method, params) {
     case "tabs.focus": {
       assertNotStopped();
       const tab = await chrome.tabs.get(params.tabId ?? lastTabId);
+      assertNotExtensionPage(tab.url);
+      assertSiteAllowed(tab.url);
       lastTabId = tab.id;
       await prepareTab(tab, { bringToFront: true, focusWindow: params.focusWindow !== false });
       await markTab(tab.id);
@@ -1373,10 +1653,12 @@ async function dispatch(method, params) {
         closed.push(id);
       }
       saveState();
-      // The human's own tabs the agent worked in lose the badge, group and caption.
+      // Closing all its tabs means the agent is finished. The human's own tabs it
+      // worked in keep a done mark for a while; the marks go when it clears.
       if (params.all) {
         await clearCaptions().catch(() => {});
-        await unmarkTabs().catch(() => {});
+        const keep = presence.tabId != null && markedTabs.has(presence.tabId) ? presence.tabId : [...markedTabs][0] ?? null;
+        applyPresence(onExplicitDone({ ...presence, tabId: keep }, { now: Date.now() }));
       }
       return { closed };
     }
@@ -1384,6 +1666,7 @@ async function dispatch(method, params) {
     case "page.navigate": {
       assertNotStopped();
       assertWebUrl(String(params.url || ""));
+      assertSiteAllowed(params.url);
       const tab = await resolveTab(params);
       lastTabId = tab.id;
       assertNoDialog(tab.id);
@@ -1807,19 +2090,31 @@ async function dispatch(method, params) {
       assertNoDialog(tab.id);
       await prepareTab(tab);
       await markTab(tab.id);
-      // The caption is for the human watching; keep it out of the agent's view.
-      const hideCaption = captions.has(tab.id) && !params.caption;
-      if (hideCaption) await page(tab.id, "pointer:caption-visible", { on: false }).catch(() => {});
+      // The bar, edge, cursor and caption are for the human watching; keep them
+      // out of the agent's view unless it asks for them (caption: true).
+      const hideOverlay = !params.caption;
+      if (hideOverlay) await page(tab.id, "pointer:overlay-visible", { on: false }).catch(() => {});
       try {
         await sleep(120);
         return await captureTab(tab, params);
       } finally {
-        if (hideCaption) await page(tab.id, "pointer:caption-visible", { on: true }).catch(() => {});
+        if (hideOverlay) await page(tab.id, "pointer:overlay-visible", { on: true }).catch(() => {});
       }
     }
 
     case "page.caption": {
-      if (params.clear) return { cleared: await clearCaptions() };
+      if (params.clear) {
+        applyPresence(onClearSay(presence));
+        return { cleared: await clearCaptions() };
+      }
+      if (params.done) {
+        // The agent says the task is finished: the bar becomes a done chip.
+        const tab = await resolveTab(params).catch(() => null);
+        await clearCaptions().catch(() => {});
+        const text = String(params.text || "").trim().slice(0, 300);
+        applyPresence(onSay(presence, { done: true, text, tabId: tab?.id ?? presence.tabId, now: Date.now() }));
+        return { url: tab?.url || "", done: true };
+      }
       assertNotStopped();
       const text = String(params.text || "").trim();
       if (!text) throw new Error("Pass the caption text, or clear: true to remove it.");
@@ -1841,6 +2136,7 @@ async function dispatch(method, params) {
       }
       captions.set(tab.id, cap);
       saveState();
+      applyPresence(onSay(presence, { text: cap.text, step: cap.step, tabId: tab.id, now: Date.now() }));
       return { url: (await chrome.tabs.get(tab.id)).url, target: res.target || null };
     }
 
@@ -1890,9 +2186,12 @@ async function dispatch(method, params) {
     }
 
     case "page.hidePointer": {
-      const tab = await resolveTab(params);
+      const tab = await resolveTab(params, { allowBlocked: true });
       await page(tab.id, "pointer:hide", {});
       await clearCaptions();
+      // The agent's own stop: it is finished (notify), then clean up at once.
+      applyPresence(onExplicitDone(presence, { now: Date.now() }));
+      applyPresence(onDismiss(presence, Date.now()));
       await unmarkTabs();
       return { ok: true };
     }
@@ -1914,6 +2213,7 @@ async function dispatch(method, params) {
       const was = stopped;
       stopped = false;
       saveState();
+      applyPresence(onResume(presence, { now: Date.now() }));
       return { resumed: was };
     }
 

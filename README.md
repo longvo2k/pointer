@@ -21,12 +21,16 @@ local hub and a Chrome extension to act in your own Chrome, and draws each move 
 - **Any agent.** One MCP server for Claude Code, Cursor, OpenCode, and Codex, plus a plain CLI for
   shell agents.
 - **You can watch.** Before a click lands, the cursor slides to the target with a label
-  (`click · Sign Up`) and a ripple. Agent tabs sit in a tab group named after the agent.
+  (`click · Sign Up`) and a ripple. While an agent works in a tab, a thin line marks the tab and a bar
+  at the bottom says who is working, what it is doing, and has a Stop button. Agent tabs sit in a tab
+  group named after the agent, marked ⌛ working, ✋ waiting for you, or ✅ done.
 - **You stay where you are.** The agent works in background tabs and never pulls you away from your
   tab, window, or profile. With several Chrome profiles, a new task starts in the one you are using.
-- **You can stop it.** `Esc`, a real click in the agent's tab, the popup's Stop button, or
-  `Alt+Shift+S` (`Option+Shift+S` on a Mac, works even if a page swallows `Esc`) stops it. Every
-  action is refused until the agent asks you and calls `resume`.
+- **You can stop it.** The bar's Stop button, `Esc`, a real click in the agent's tab, the popup's Stop
+  button, or `Alt+Shift+S` (`Option+Shift+S` on a Mac, works even if a page swallows `Esc`) stops it.
+  Every action is refused until the agent asks you and calls `resume`.
+- **You decide.** A settings page turns each of these on or off, sends a notification when the agent
+  finishes or needs you, and keeps agents off sites you list, like your bank.
 - **Real input.** Clicks and keys go through `chrome.debugger`, so React handlers and pointer checks
   behave as they do for a person.
 - **Small token bill.** Snapshots list what is on screen, and every action reports only what changed.
@@ -240,7 +244,7 @@ show up too, so the agent sees "Saved" or "Pick a plan to continue" without anot
 | Screen size and layout | `viewport`, `layout` |
 | Act | `click`, `hover`, `fill`, `press`, `scroll`, `navigate`, `upload`, `dialog` |
 | Debug | `console`, `network` |
-| Narrate | `say` |
+| Narrate, mark done | `say` |
 | Stop | `stop`, `resume` |
 
 A few that need explaining:
@@ -277,6 +281,8 @@ A few that need explaining:
   the element it describes, and disappear after a few seconds. It stays across page loads, never
   blocks clicks, is left out of screenshots (unless asked) and `layout`, and `stop` hides it.
   `click`, `hover`, `fill`, `press`, and `scroll` take `say` too, to caption a step right before it.
+  `say` with `done: true` (CLI: `pointer say --done "summary"`) tells you the task is finished: the
+  bar becomes a ✅ mark and, if you turned it on, you get a notification.
 - `console` and `network` read the tab's errors and requests. Capture starts on the first call
   (`reload: true` captures a page load), because turning it on makes the debugger easier for anti-bot
   scripts to notice.
@@ -318,6 +324,33 @@ pointer browsers         # each profile: build, last focus, which one is active
 pointer use 3f9c1a2b     # pin one profile
 pointer use auto         # follow the profile you use again
 ```
+
+## What you see, and settings
+
+While an agent works in a tab, Pointer draws a thin line around it and a bar at the bottom:
+
+| The bar shows | When | Tab group |
+|---|---|---|
+| The agent's name, its step, what it is doing, and **Stop** | it is acting | `⌛ name` |
+| "Thinking…" and its last action | no command for a couple of seconds | `⌛ name` |
+| "No activity from name for a minute" | no command for a minute (it may still be working) | `⌛ name` |
+| "name is waiting for you" in amber | you stopped it; it must ask you before going on | `✋ name` |
+| "✅ name finished here" | the agent said it is done | `✅ name` |
+
+None of this shows up in the agent's screenshots.
+
+Open the settings from the gear in the Pointer popup, or right-click the toolbar icon and choose
+**Options**. You can:
+
+- turn the bar, the line, the action labels, and the tab-group marks on or off, and pick a Fast cursor;
+- get a notification when the agent finishes or is waiting for you (Chrome asks once; off until you
+  turn it on, and only when you are looking at something else);
+- choose whether `Esc` or a click in the agent's tab stops it (the popup and `Alt+Shift+S` always do);
+- list **blocked sites**, like `mybank.com` (which also covers `login.mybank.com`) or
+  `github.com/myorg/*`. Agents cannot open, read, or act on them; if a click or redirect lands on
+  one, the agent is told only that it did, and `tabs_list` shows such tabs as "(blocked site)".
+
+Agents cannot open or change the settings page.
 
 ## Troubleshooting
 
@@ -397,7 +430,8 @@ Pointer drives your logged-in browser, so it should be easy to check. In short:
   pretending to be the extension. Tests cover each rule.
 - **One runtime dependency** (`ws`), no install scripts, and plain, unminified source you can read.
 - **Your agent sees what it reads.** Page text and screenshots go to the agent you connected, and
-  from there to its AI model provider. See [PRIVACY.md](PRIVACY.md).
+  from there to its AI model provider. See [PRIVACY.md](PRIVACY.md). Sites you block in the
+  settings are never read.
 
 Check it yourself from a checkout:
 

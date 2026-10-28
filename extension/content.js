@@ -36,9 +36,16 @@
     root.innerHTML = `
       <style>
         :host { all: initial; }
-        .glow, .arrow, .ripple, .label, .target, .caption, .spot {
+        .glow, .arrow, .ripple, .label, .target, .caption, .spot, .edge {
           position: fixed; pointer-events: none; box-sizing: border-box;
         }
+        /* A steady line around the tab while an agent has it: blue, amber when stopped. */
+        .edge {
+          inset: 0; border: 2px solid rgba(37,99,235,.55); opacity: 0;
+          transition: opacity 200ms ease;
+        }
+        .edge.on { opacity: 1; }
+        .edge.amber { border-color: rgba(217,119,6,.8); }
         .glow {
           width: 54px; height: 54px; margin: -27px 0 0 -27px; border-radius: 50%;
           background: radial-gradient(circle, rgba(37,99,235,.45) 0%, rgba(37,99,235,.18) 45%, rgba(37,99,235,0) 72%);
@@ -77,7 +84,7 @@
         /* A dark card with a light ring reads on light and dark pages alike. */
         .caption {
           left: 50%; bottom: 20px; width: max-content; max-width: min(760px, calc(100vw - 32px));
-          display: flex; align-items: baseline; gap: 10px; padding: 10px 16px;
+          display: flex; align-items: center; gap: 10px; padding: 8px 8px 8px 12px;
           border-radius: 12px; background: rgba(17,24,39,.94); color: #f9fafb;
           font: 500 15px/1.45 ui-sans-serif, -apple-system, "Segoe UI", sans-serif;
           box-shadow: 0 8px 28px rgba(0,0,0,.32), 0 0 0 1px rgba(255,255,255,.14);
@@ -90,8 +97,35 @@
           flex: none; padding: 1px 8px; border-radius: 999px; background: #2563eb; color: #fff;
           font-size: 12.5px; font-weight: 600; letter-spacing: .02em;
         }
-        .caption .step:empty { display: none; }
+        .caption .step:empty, .caption .who:empty, .caption .act:empty { display: none; }
+        .caption .who {
+          flex: 0 1 auto; min-width: 0; max-width: 40%; overflow: hidden; text-overflow: ellipsis;
+          padding: 1px 8px; border-radius: 999px; background: #2563eb; color: #fff;
+          font-size: 12.5px; font-weight: 600; white-space: nowrap;
+        }
+        .caption .step { background: transparent; color: #93c5fd; padding: 0; }
+        .caption .text .dim { color: #9ca3af; }
+        .caption .act {
+          pointer-events: auto; flex: none; border: 0; border-radius: 8px; cursor: pointer;
+          background: #fff; color: #111827; padding: 5px 10px;
+          font: 600 12.5px/1.2 ui-sans-serif, -apple-system, "Segoe UI", sans-serif;
+        }
+        .caption .act:focus-visible { outline: 2px solid #93c5fd; outline-offset: 2px; }
+        .caption.stopped .who { background: #d97706; }
+        .caption.stopped .act { background: transparent; color: #e5e7eb; box-shadow: inset 0 0 0 1px #4b5563; }
+        /* Quiet and done shrink to a small chip in the corner. */
+        .caption.chip, .caption.chip.on {
+          left: auto; right: 16px; transform: none; max-width: min(420px, calc(100vw - 32px));
+          background: #fff; color: #111827; padding: 6px 6px 6px 12px;
+          font-size: 13px; box-shadow: 0 4px 14px rgba(0,0,0,.18), 0 0 0 1px rgba(0,0,0,.12);
+        }
+        .caption.chip .who { display: none; }
+        .caption.chip .act { background: transparent; color: #6b7280; padding: 4px 8px; }
+        @media (prefers-reduced-motion: reduce) {
+          .caption, .edge { transition: none; }
+        }
         .caption .text {
+          flex: 1 1 auto; min-width: 6ch;
           overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical;
           -webkit-line-clamp: 4; overflow: hidden;
         }
@@ -109,7 +143,8 @@
       <div class="label"></div>
       <div class="target"></div>
       <div class="spot"></div>
-      <div class="caption"><span class="step"></span><span class="text"></span></div>
+      <div class="edge"></div>
+      <div class="caption"><span class="who"></span><span class="step"></span><span class="text"></span><button class="act" type="button"></button></div>
     `;
     (document.documentElement || document.body).appendChild(host);
     overlayHost = host;
@@ -124,6 +159,7 @@
     ripple: null,
     label: null,
     target: null,
+    act: null,
     x: 0,
     y: 0,
     shown: false,
@@ -137,6 +173,21 @@
     ui.ripple = root.querySelector(".ripple");
     ui.label = root.querySelector(".label");
     ui.target = root.querySelector(".target");
+    if (!ui.act) {
+      ui.act = root.querySelector(".caption .act");
+      // The bar's one button: Stop while the agent works, otherwise Got it / ✕.
+      // Only a real click by the human counts, never the agent's own input.
+      ui.act.addEventListener("click", (e) => {
+        if (!e.isTrusted || Date.now() < agentWindowUntil) return;
+        e.stopPropagation();
+        if (view?.mode === "active") {
+          toWorker({ type: "pointer:stop", reason: "bar" });
+          hide();
+        } else {
+          toWorker({ type: "pointer:dismiss" });
+        }
+      });
+    }
     if (!ui.shown) {
       ui.x = Math.round(window.innerWidth / 2);
       ui.y = Math.round(window.innerHeight / 2);
@@ -179,6 +230,7 @@
   function move(x, y, { duration = 420 } = {}) {
     initOverlay();
     show();
+    if (view?.cursor === "fast") duration = Math.min(duration, 120);
 
     // rAF is throttled or stopped in hidden/occluded windows. The action must
     // not wait for an animation nobody can see.
@@ -227,7 +279,10 @@
 
   function say(action, target) {
     initOverlay();
-    if (!ui.label) return;
+    // What the agent just did, for the bar ("click "Create workspace"").
+    pageAction = target ? `${action} "${oneLine(target, 60)}"` : String(action || "");
+    renderBar();
+    if (!ui.label || view?.labels === false) return;
     const esc = (s) => String(s || "").replace(/[<>&]/g, "");
     ui.label.innerHTML = `<b>${esc(action)}</b>${target ? " · " + esc(target) : ""}`;
     ui.label.classList.add("on");
@@ -277,28 +332,26 @@
   // Narration for a human watching the tab: a card at the bottom (or the top,
   // when the pointer or the outlined element sits under it) plus an outline
   // that follows the element it describes.
-  const caption = { on: false, timer: 0, spotEl: null, frame: 0 };
+  const caption = { on: false, timer: 0, spotEl: null, frame: 0, text: "", step: "" };
 
-  function captionParts() {
-    initOverlay();
-    return { box: ui.root.querySelector(".caption"), spot: ui.root.querySelector(".spot") };
-  }
+  // Presence: what the worker says the agent is doing (presence.js viewOf),
+  // drawn as the bar at the bottom and a line around the tab.
+  const THINKING_MS = 2000;
+  let view = null;
+  let pageAction = "";
+  let thinkTimer = 0;
 
   function showCaption({ text, step, until, ref, selector }) {
     const target = ref || selector ? resolve({ ref, selector }) : null;
-    const { box } = captionParts();
-    box.querySelector(".step").textContent = step || "";
-    box.querySelector(".text").textContent = text || "";
-    box.style.visibility = "";
-    box.style.transition = document.visibilityState === "hidden" ? "none" : "";
-    box.classList.add("on");
+    caption.text = text || "";
+    caption.step = step || "";
     caption.on = true;
     clearTimeout(caption.timer);
     if (until) caption.timer = setTimeout(clearCaption, Math.max(0, until - Date.now()));
     trackSpot(target);
     if (target) scrollIntoView(target);
     placeSpot();
-    placeCaption();
+    renderBar();
     return target ? `${roleOf(target) || "element"} "${oneLine(nameOf(target), 60)}"` : null;
   }
 
@@ -307,19 +360,86 @@
     trackSpot(null);
     if (!caption.on) return false;
     caption.on = false;
-    const { box } = captionParts();
-    // Hidden tabs freeze CSS fades, so a screenshot would catch it half gone.
-    box.style.transition = document.visibilityState === "hidden" ? "none" : "";
-    box.classList.remove("on", "top");
+    renderBar();
     return true;
   }
 
-  /** Hide or restore the caption without clearing it, e.g. around a screenshot. */
-  function captionVisible(on) {
-    if (!caption.on) return;
-    const { box, spot } = captionParts();
-    box.style.visibility = on ? "" : "hidden";
-    spot.style.visibility = on ? "" : "hidden";
+  /** Hide or restore everything Pointer draws at once, e.g. around a screenshot. */
+  function overlayVisible(on) {
+    if (!overlayHost) return;
+    overlayHost.style.setProperty("visibility", on ? "visible" : "hidden", "important");
+  }
+
+  function setPresence(next) {
+    // A new labelled command (open, read, scroll...) replaces the page's own last label.
+    if (!next || next.lastAction !== view?.lastAction) pageAction = "";
+    view = next || null;
+    clearInterval(thinkTimer);
+    thinkTimer = 0;
+    if (view?.mode === "active") thinkTimer = setInterval(renderBar, 500);
+    renderBar();
+  }
+
+  function barContent() {
+    const mode = view?.mode || "off";
+    const plain = { kind: "", who: "", step: caption.step, text: caption.text, dim: "", act: "" };
+    if (mode === "off" || !view.bar) return { ...plain, show: caption.on };
+    if (mode === "stopped") {
+      return { show: true, kind: "stopped", who: "Stopped", step: "", dim: "", act: "Got it",
+        text: `${view.agent} is waiting for you. Reply in its chat to let it continue.` };
+    }
+    if (mode === "done") {
+      const n = view.actions;
+      const text = view.doneText || `${view.agent} finished here · ${n} action${n === 1 ? "" : "s"}`;
+      return { show: true, kind: "chip", who: "", step: "", text: `✅ ${text}`, dim: "", act: "✕" };
+    }
+    if (mode === "quiet") {
+      return { show: true, kind: "chip", who: "", step: "", text: `No activity from ${view.agent} for a minute`, dim: "", act: "✕" };
+    }
+    const base = { show: true, kind: "", who: view.agent, act: "■ Stop" };
+    if (caption.on) return { ...base, step: caption.step, text: caption.text, dim: "" };
+    const doing = pageAction || view.lastAction;
+    const thinking = !view.busy && Date.now() - view.lastActivityAt >= THINKING_MS;
+    if (thinking) return { ...base, step: "", text: "Thinking…", dim: doing ? ` · last: ${doing}` : "" };
+    return { ...base, step: "", text: doing || "Working", dim: "" };
+  }
+
+  /** Draw the bar and the edge from the presence and any narration. */
+  function renderBar() {
+    if (!view && !caption.on && !ui.root) return; // nothing to draw yet
+    initOverlay();
+    const box = ui.root.querySelector(".caption");
+    const edge = ui.root.querySelector(".edge");
+    const mode = view?.mode || "off";
+    const hidden = document.visibilityState === "hidden";
+
+    edge.style.transition = hidden ? "none" : "";
+    edge.classList.toggle("on", Boolean(view?.edge) && ["active", "quiet", "stopped"].includes(mode));
+    edge.classList.toggle("amber", mode === "stopped");
+
+    const c = barContent();
+    box.querySelector(".who").textContent = c.who;
+    box.querySelector(".step").textContent = c.step;
+    const text = box.querySelector(".text");
+    text.textContent = c.text;
+    if (c.dim) {
+      const dim = document.createElement("span");
+      dim.className = "dim";
+      dim.textContent = c.dim;
+      text.appendChild(dim);
+    }
+    box.querySelector(".act").textContent = c.act;
+    box.classList.toggle("stopped", c.kind === "stopped");
+    box.classList.toggle("chip", c.kind === "chip");
+    // Hidden tabs freeze CSS fades, so a screenshot would catch it half gone.
+    box.style.transition = hidden ? "none" : "";
+    if (c.show) {
+      box.style.visibility = "";
+      box.classList.add("on");
+    } else {
+      box.classList.remove("on", "top");
+    }
+    placeCaption();
   }
 
   const onViewChange = () => {
@@ -369,8 +489,9 @@
 
   /** Move the card to the top when it would hide the pointer or the outlined element. */
   function placeCaption() {
-    if (!caption.on || !ui.root) return;
+    if (!ui.root) return;
     const box = ui.root.querySelector(".caption");
+    if (!box.classList.contains("on")) return;
     const band = window.innerHeight - 20 - box.offsetHeight - 12;
     const spot = caption.spotEl?.isConnected ? caption.spotEl.getBoundingClientRect() : null;
     const under = (ui.shown && ui.y > band) || (spot && spot.bottom > band && spot.top < window.innerHeight);
@@ -806,7 +927,8 @@
    */
   function coverAt(el, x, y) {
     const hit = document.elementFromPoint(x, y);
-    if (!hit || hit === el || el.contains(hit) || hit.contains(el)) return null;
+    // Pointer's own bar is moved out of the way before input; it never counts as a cover.
+    if (!hit || hit === overlayHost || hit === el || el.contains(hit) || hit.contains(el)) return null;
     if (hit.tagName === "LABEL" && hit.control === el) return null;
     if (el.tagName === "LABEL" && el.control === hit) return null;
     const modal = hit.closest(MODAL);
@@ -1399,8 +1521,11 @@
             if (p.off) return sendResponse({ ok: true, cleared: clearCaption() });
             return sendResponse({ ok: true, target: showCaption(p) });
           }
-          case "pointer:caption-visible":
-            captionVisible(Boolean(msg.params?.on));
+          case "pointer:overlay-visible":
+            overlayVisible(Boolean(msg.params?.on));
+            return sendResponse({ ok: true });
+          case "pointer:presence":
+            setPresence(msg.params || null);
             return sendResponse({ ok: true });
           case "pointer:layout":
             return sendResponse({ ok: true, text: layoutReport(msg.params || {}) });
@@ -1533,7 +1658,8 @@
     "keydown",
     (e) => {
       // The agent's own `press Escape` is trusted too; ignore it like its clicks.
-      if (e.key === "Escape" && e.isTrusted && humanCanSeeAgentTab() && Date.now() >= agentWindowUntil) {
+      const allowed = view ? view.tabStops.esc : true;
+      if (e.key === "Escape" && e.isTrusted && allowed && humanCanSeeAgentTab() && Date.now() >= agentWindowUntil) {
         toWorker({ type: "pointer:stop", reason: "escape" });
         hide();
       }
@@ -1545,6 +1671,8 @@
     (e) => {
       if (!e.isTrusted || !ui.shown || !humanCanSeeAgentTab()) return;
       if (Date.now() < agentWindowUntil) return; // it was the agent's own click
+      if (view && !view.tabStops.click) return; // turned off in settings, or the agent is not working
+      if (overlayHost && e.composedPath().includes(overlayHost)) return; // the bar's own button
       toWorker({ type: "pointer:stop", reason: "takeover" });
       hide();
     },

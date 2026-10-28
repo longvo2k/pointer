@@ -19,7 +19,7 @@
  *   pointer shot [path]      screenshot (saves PNG, prints path)
  *   pointer viewport mobile  emulate a screen size (tablet, desktop, W H, reset)
  *   pointer layout           check spacing, overflow, overlaps, tap targets
- *   pointer say <text>       caption for a human watching the tab (--step, --for, --ref, --clear)
+ *   pointer say <text>       caption for a human watching the tab (--step, --for, --ref, --clear, --done)
  *   pointer stop             hide the pointer and stop
  *   pointer resume           continue after a human stop (ask first)
  *   pointer setup            show install paths and open chrome://extensions
@@ -370,12 +370,16 @@ async function main() {
     case "say":
     case "caption": {
       if (rest.includes("--clear")) return print((await tool("say", { clear: true })).text);
+      if (rest.includes("--done")) {
+        const said = rest.filter((a) => a !== "--done").join(" ");
+        return print((await tool("say", { done: true, text: said || undefined })).text);
+      }
       const step = takeOpt(rest, "--step");
       const time = takeOpt(rest, "--for");
       const ref = takeOpt(rest, "--ref");
       if (time != null && !/^\d+(\.\d+)?s?$/.test(time)) throw new Error("--for takes seconds, e.g. --for 5s");
       const text = rest.join(" ");
-      if (!text) throw new Error('Usage: pointer say "<text>" [--step 3/5] [--for 5s] [--ref e10] | pointer say --clear');
+      if (!text) throw new Error('Usage: pointer say "<text>" [--step 3/5] [--for 5s] [--ref e10] | pointer say --clear | pointer say --done');
       const target = ref == null ? {} : /^@?e\d+$/.test(ref) ? { ref } : { selector: ref };
       return print(
         (await tool("say", { text, step, seconds: time != null ? Number(time.replace(/s$/, "")) : undefined, ...target })).text
@@ -423,6 +427,8 @@ function usage() {
   pointer network [filter] [--failed] [--all] [--reload] [--body <id>]
   pointer say "<text>" [--step 3/5] [--for 5s] [--ref e10]
                                 caption for a human watching the tab; pointer say --clear removes it
+  pointer say --done ["<summary>"]
+                                mark the task finished (shows a done mark, may notify the human)
   --say "<text>"                on click, hover, fill, press, scroll: caption the step first
   pointer stop                  hide pointer and caption, stop acting
   pointer resume                continue after the human stopped the agent (ask them first)

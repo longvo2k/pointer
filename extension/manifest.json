@@ -18,6 +18,9 @@
     "storage",
     "alarms"
   ],
+  "optional_permissions": [
+    "notifications"
+  ],
   "host_permissions": [
     "<all_urls>"
   ],
@@ -38,6 +41,10 @@
       "all_frames": false
     }
   ],
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
   "action": {
     "default_title": "Pointer",
     "default_popup": "popup.html",
