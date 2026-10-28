@@ -441,6 +441,10 @@ hard stop rather than a retry.
 ln -s "$PWD/skills/pointer" ~/.claude/skills/pointer
 ```
 
+Not using a checkout? Each [GitHub release](https://github.com/longvo2k/pointer/releases) has a
+`pointer-skill-<version>.zip`; unzip it into your skills folder. The skill works with Pointer
+installed from npm or the installer, and walks the agent through setup if it is missing.
+
 Start a new session so the skill shows up. The bundled `skills/pointer/scripts/pointer` wrapper
 finds the checkout from its own location, so the skill works linked, copied into a project, or run
 from the repo.

@@ -1,20 +1,35 @@
 #!/usr/bin/env bash
-# Resolve the Pointer checkout from this skill's location, even when the skill
-# directory is symlinked (e.g. ~/.claude/skills/pointer -> <repo>/skills/pointer).
+# Run the Pointer CLI from wherever it is installed:
+#   1. POINTER_ROOT, if set
+#   2. the checkout this skill lives in (also when the skill folder is symlinked,
+#      e.g. ~/.claude/skills/pointer -> <repo>/skills/pointer)
+#   3. the installer's folder, ~/.pointer (or POINTER_DIR)
+#   4. a `pointer` command on PATH (npm install -g @longvo2k/pointer)
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-root="$(cd "$here/../../.." && pwd -P)"
+self="$here/$(basename "${BASH_SOURCE[0]}")"
 
-# Allow an explicit override for unusual installs.
-if [ -n "${POINTER_ROOT:-}" ]; then
-  root="$POINTER_ROOT"
+for root in "${POINTER_ROOT:-}" "$here/../../.." "${POINTER_DIR:-$HOME/.pointer}"; do
+  if [ -n "$root" ] && [ -f "$root/bin/pointer.mjs" ]; then
+    exec node "$root/bin/pointer.mjs" "$@"
+  fi
+done
+
+if cli="$(command -v pointer 2>/dev/null)"; then
+  # Skip this wrapper itself, if it was linked onto PATH.
+  real="$(cd "$(dirname "$cli")" && pwd -P)/$(basename "$cli")"
+  if [ "$real" != "$self" ]; then
+    exec "$cli" "$@"
+  fi
 fi
 
-if [ ! -f "$root/bin/pointer.mjs" ]; then
-  echo "✗ Could not find bin/pointer.mjs under $root" >&2
-  echo "  Set POINTER_ROOT to the Pointer checkout and call node \$POINTER_ROOT/bin/pointer.mjs directly." >&2
-  exit 1
-fi
-
-exec node "$root/bin/pointer.mjs" "$@"
+cat >&2 <<'EOF'
+✗ Pointer is not installed.
+  Set it up as the "First use" section of SKILL.md says:
+    1. npm install -g @longvo2k/pointer   (Node 18+), or the installer from
+       https://github.com/longvo2k/pointer#install
+    2. the human adds the Pointer extension from the Chrome Web Store
+  Or set POINTER_ROOT to a Pointer checkout.
+EOF
+exit 1
