@@ -240,3 +240,22 @@ test("notification text", () => {
     message: "You stopped it on example.com. Reply in its chat to continue.",
   });
 });
+
+test("closing tabs after say done keeps the done mark and does not notify again", () => {
+  const done = onSay(cmd(active(), "page.act", {}, 1500), { done: true, text: "All set", tabId: 7, now: 2000 });
+  const after = cmd(done, "tabs.close", { all: true }, 2500);
+  assert.equal(after.state, "done");
+  assert.equal(after.doneText, "All set");
+  assert.equal(effectsOf(done, onExplicitDone(after, { now: 2600 })).notify, null);
+});
+
+test("a command while the human's stop holds shows the agent as stopped", () => {
+  for (const from of [initialPresence(), onExplicitDone(active(), { now: 1500 })]) {
+    const p = onCommand(from, { method: "page.snapshot", params: {}, tabId: 7, now: 3000, held: true });
+    assert.equal(p.state, "stopped");
+    assert.equal(groupPrefix(p), "✋ ");
+    assert.equal(stopAccepted(p, "esc"), false);
+  }
+  const resumed = onCommand(initialPresence(), { method: "page.snapshot", params: {}, tabId: 7, now: 3000, held: false });
+  assert.equal(resumed.state, "active");
+});

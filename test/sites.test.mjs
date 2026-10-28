@@ -35,3 +35,16 @@ test("non-web URLs and empty lists are never blocked", () => {
   assert.equal(isBlockedUrl("not a url", ["*"]), false);
   assert.equal(isBlockedUrl("https://mybank.com/", []), false);
 });
+
+test("a trailing dot does not get around a block", () => {
+  assert.equal(isBlockedUrl("https://mybank.com./", ["mybank.com/*"]), true);
+  assert.equal(isBlockedUrl("https://www.mybank.com./login", ["mybank.com/*"]), true);
+});
+
+test("a blocked domain covers its subdomains, and a blocked folder covers itself", () => {
+  assert.equal(isBlockedUrl("https://login.mybank.com/", ["mybank.com/*"]), true);
+  assert.equal(isBlockedUrl("https://a.b.mybank.com/x", ["mybank.com/*"]), true);
+  assert.equal(isBlockedUrl("https://notmybank.com/", ["mybank.com/*"]), false);
+  assert.equal(isBlockedUrl("https://github.com/myorg", ["github.com/myorg/*"]), true);
+  assert.equal(isBlockedUrl("https://github.com/myorgx", ["github.com/myorg/*"]), false);
+});

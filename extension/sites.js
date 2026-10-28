@@ -23,12 +23,20 @@ export function normalizeSitePattern(input) {
   return host + path;
 }
 
+const escape = (text) => text.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
+const glob = (text, star) => text.split("*").map(escape).join(star);
+
+/**
+ * A blocked domain also covers its subdomains (mybank.com blocks login.mybank.com),
+ * and a blocked folder covers the folder itself (github.com/myorg/* blocks github.com/myorg).
+ */
 function patternRegExp(pattern) {
-  const body = pattern
-    .split("*")
-    .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
-    .join(".*");
-  return new RegExp(`^${body}$`, "i");
+  const slash = pattern.indexOf("/");
+  const host = slash < 0 ? pattern : pattern.slice(0, slash);
+  const path = slash < 0 ? "/*" : pattern.slice(slash);
+  const hostRe = `(?:[^/]*\\.)?${glob(host, "[^/]*")}`;
+  const pathRe = path.endsWith("/*") ? `${glob(path.slice(0, -2), ".*")}(?:/.*)?` : glob(path, ".*");
+  return new RegExp(`^${hostRe}${pathRe}$`, "i");
 }
 
 /** True when the URL is a web page covered by one of the patterns. */
@@ -41,6 +49,8 @@ export function isBlockedUrl(url, patterns) {
     return false;
   }
   if (u.protocol !== "http:" && u.protocol !== "https:") return false;
-  const target = (u.hostname.replace(/^www\./, "") + u.pathname).toLowerCase();
+  // "mybank.com." is the same site as "mybank.com".
+  const host = u.hostname.replace(/\.$/, "").replace(/^www\./, "");
+  const target = (host + u.pathname).toLowerCase();
   return patterns.some((p) => patternRegExp(p).test(target));
 }

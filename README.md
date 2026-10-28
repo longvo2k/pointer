@@ -346,8 +346,9 @@ Open the settings from the gear in the Pointer popup, or right-click the toolbar
 - get a notification when the agent finishes or is waiting for you (Chrome asks once; off until you
   turn it on, and only when you are looking at something else);
 - choose whether `Esc` or a click in the agent's tab stops it (the popup and `Alt+Shift+S` always do);
-- list **blocked sites**, like `mybank.com` or `github.com/myorg/*`. Agents cannot open, read, or act
-  on them, and `tabs_list` shows them only as "(blocked site)".
+- list **blocked sites**, like `mybank.com` (which also covers `login.mybank.com`) or
+  `github.com/myorg/*`. Agents cannot open, read, or act on them; if a click or redirect lands on
+  one, the agent is told only that it did, and `tabs_list` shows such tabs as "(blocked site)".
 
 Agents cannot open or change the settings page.
 

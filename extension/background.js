@@ -52,7 +52,15 @@ let settings = withDefaults(undefined);
 // The human's stop, the agent's own tabs and emulated sizes must survive the
 // service worker being suspended, so they live in session storage too.
 const restored = chrome.storage.session
-  .get(["pointerStopped", "pointerOpenedTabs", "pointerViewports", "pointerCaptions", "pointerPresence"])
+  .get([
+    "pointerStopped",
+    "pointerOpenedTabs",
+    "pointerViewports",
+    "pointerCaptions",
+    "pointerPresence",
+    "pointerMarkedTabs",
+    "pointerAgentGroups",
+  ])
   .then((v) => {
     stopped = stopped || Boolean(v.pointerStopped);
     for (const id of v.pointerOpenedTabs || []) openedTabs.add(Number(id));
@@ -63,6 +71,11 @@ const restored = chrome.storage.session
       if (!captions.has(Number(id))) captions.set(Number(id), cap);
     }
     if (v.pointerPresence && presence.state === "idle") presence = { ...initialPresence(), ...v.pointerPresence };
+    // The agent's tabs and groups, so a worker Chrome woke again can still retitle and clear them.
+    for (const id of v.pointerMarkedTabs || []) markedTabs.add(Number(id));
+    for (const [windowId, groupId] of Object.entries(v.pointerAgentGroups || {})) {
+      if (!agentGroups.has(Number(windowId))) agentGroups.set(Number(windowId), groupId);
+    }
   })
   .catch(() => {});
 
@@ -72,6 +85,10 @@ const settingsLoaded = chrome.storage.local
     settings = withDefaults(v?.[SETTINGS_KEY]);
   })
   .catch(() => {});
+
+// Saved state and the human's settings are both back: every path that acts on
+// them after the worker wakes (commands, stops, alarms, page loads) waits for this.
+const ready = Promise.all([restored, settingsLoaded]);
 
 // A change on the settings page applies at once: titles and the agent's tab update.
 chrome.storage.onChanged.addListener((changes, area) => {
@@ -89,6 +106,8 @@ function saveState() {
       pointerViewports: Object.fromEntries(viewports),
       pointerCaptions: Object.fromEntries(captions),
       pointerPresence: presence,
+      pointerMarkedTabs: [...markedTabs],
+      pointerAgentGroups: Object.fromEntries(agentGroups),
     })
     .catch(() => {});
 }
@@ -265,7 +284,7 @@ chrome.alarms.get("pointer-keepalive").then((alarm) => {
 chrome.alarms.onAlarm.addListener((a) => {
   if (a.name === "pointer-keepalive") {
     connect();
-    restored.then(() => applyPresence(onTick(presence, Date.now())));
+    ready.then(() => applyPresence(onTick(presence, Date.now())));
   }
 });
 chrome.runtime.onStartup.addListener(connect);
@@ -281,7 +300,7 @@ connect();
 const STOP_SOURCES = { escape: "esc", takeover: "click", bar: "bar", popup: "popup", shortcut: "shortcut" };
 
 async function stopAgent(reason) {
-  await restored;
+  await ready;
   // Esc, a click and the bar count only while the agent may be working; the
   // popup and the shortcut always stop, even with no agent in sight.
   const source = STOP_SOURCES[reason] || "popup";
@@ -328,7 +347,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (msg.type === "pointer:dismiss") {
     // Got it on the stopped bar, or ✕ on a chip. Never resumes the agent.
-    restored.then(() => applyPresence(onDismiss(presence, Date.now())));
+    ready.then(() => applyPresence(onDismiss(presence, Date.now())));
     sendResponse({ ok: true });
     return;
   }
@@ -504,6 +523,9 @@ async function ensureAgentGroup(tabId) {
       const existing = await chrome.tabGroups.get(tab.groupId).catch(() => null);
       if (existing && baseGroupTitle(existing.title) === baseGroupTitle(title)) {
         agentGroups.set(tab.windowId, tab.groupId);
+        saveState();
+        // It may still carry an old ⌛ ✋ ✅ from before the worker restarted.
+        if (existing.title !== title) await chrome.tabGroups.update(tab.groupId, { title }).catch(() => {});
         return tab.groupId;
       }
 
@@ -530,6 +552,7 @@ async function ensureAgentGroup(tabId) {
     }
 
     agentGroups.set(tab.windowId, groupId);
+    saveState();
     await chrome.tabGroups.update(groupId, { title, color: GROUP_COLOR }).catch(() => {});
     return groupId;
   });
@@ -548,6 +571,7 @@ async function ungroupAgentTabs() {
   return queueGroupOp(async () => {
     const groupIds = new Set(agentGroups.values());
     agentGroups.clear();
+    saveState();
     if (!groupIds.size) return;
     const tabs = await chrome.tabs.query({});
     const tabIds = tabs.filter((tab) => groupIds.has(tab.groupId)).map((tab) => tab.id);
@@ -578,7 +602,10 @@ async function groupSummary() {
  * title badge, e.g. group "Claude" + "Claude · PAVE Inspect".
  */
 async function markTab(tabId) {
-  markedTabs.add(tabId);
+  if (!markedTabs.has(tabId)) {
+    markedTabs.add(tabId);
+    saveState();
+  }
   await ensureAgentGroup(tabId).catch(() => {});
   try {
     await page(tabId, "pointer:mark", { label: agentName });
@@ -590,6 +617,7 @@ async function markTab(tabId) {
 async function unmarkTabs() {
   const tabs = [...markedTabs];
   markedTabs.clear();
+  saveState();
   await Promise.all(
     tabs.map((tabId) => page(tabId, "pointer:mark", { off: true }).catch(() => {}))
   );
@@ -986,6 +1014,10 @@ async function startCapture(tabId, kind) {
 // the agent is still showing there.
 chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
   if (info.status !== "complete") return;
+  ready.then(() => afterLoad(tabId, tab));
+});
+
+function afterLoad(tabId, tab) {
   // The agent's tab landed on a blocked site (a click, a redirect): draw nothing
   // there; every further command on it is refused by resolveTab.
   if (isBlocked(tab?.url) && (markedTabs.has(tabId) || tabId === presence.tabId)) {
@@ -1004,7 +1036,7 @@ chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
       page(tabId, "pointer:caption", cap).catch(() => {});
     }
   }
-});
+}
 
 /** Take every caption down, e.g. when the human stops the agent. */
 async function clearCaptions() {
@@ -1407,18 +1439,19 @@ function assertUploadable(file) {
  * "thinking" clock.
  */
 async function dispatch(method, params) {
-  await restored;
-  await settingsLoaded;
+  await ready;
   const requestedAgent = String(params?.agent || "").trim();
   if (requestedAgent && requestedAgent !== agentName) {
     agentName = requestedAgent;
     refreshGroupLabels().catch(() => {});
   }
   const counts = describeCommand(method, params || {}) !== null;
-  applyPresence(onCommand(presence, { method, params, tabId: params?.tabId ?? lastTabId, now: Date.now() }));
+  applyPresence(onCommand(presence, { method, params, tabId: params?.tabId ?? lastTabId, now: Date.now(), held: stopped }));
   if (counts) commandsInFlight++;
   try {
-    return await runCommand(method, params);
+    const result = await runCommand(method, params);
+    await assertResultNotBlocked(method, result);
+    return result;
   } finally {
     if (counts) {
       commandsInFlight = Math.max(0, commandsInFlight - 1);
@@ -1426,6 +1459,27 @@ async function dispatch(method, params) {
         applyPresence({ ...presence, tabId: lastTabId ?? presence.tabId, lastActivityAt: Date.now() });
       }
     }
+  }
+}
+
+// Calls whose results never carry page content, or that must work anywhere.
+const NO_PAGE_RESULT = new Set(["ext.status", "ext.rename", "ext.reload", "ext.resume", "tabs.list", "tabs.close", "page.hidePointer", "page.caption"]);
+
+/**
+ * The block is checked before a command, but a click, Enter, history step or
+ * redirect can land on a blocked site during it. Then the result (a snapshot,
+ * the changes, the new URL and title) must not reach the agent.
+ */
+async function assertResultNotBlocked(method, result) {
+  if (NO_PAGE_RESULT.has(method) || !settings.blockedSites.length) return;
+  const tabId = result?.tabId ?? lastTabId;
+  if (tabId == null) return;
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  if (tab && isBlocked(tab.url)) {
+    throw new Error(
+      "That took the tab to a site blocked in Pointer's settings, so Pointer shows nothing from it. " +
+        "Ask the human to do this step."
+    );
   }
 }
 

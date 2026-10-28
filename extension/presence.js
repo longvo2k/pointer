@@ -17,7 +17,17 @@ export const STOPPED_CLEAR_MS = 30 * 60_000;
 export const PREFIXES = ["⌛ ", "✋ ", "✅ "];
 
 /** Calls that are not the agent working: status checks, settings-free housekeeping. */
-const NOT_ACTIVITY = new Set(["ext.status", "tabs.list", "ext.rename", "ext.reload", "ext.resume", "page.caption", "page.hidePointer"]);
+const NOT_ACTIVITY = new Set([
+  "ext.status",
+  "tabs.list",
+  "ext.rename",
+  "ext.reload",
+  "ext.resume",
+  "page.caption",
+  "page.hidePointer",
+  // Closing tabs is clean-up, often right after say done; it must not restart the task.
+  "tabs.close",
+]);
 
 /** Calls that change the page, counted in "N actions". */
 const ACTIONS = new Set([
@@ -100,10 +110,15 @@ function activate(p, { tabId, now, label = "", action = false }) {
   };
 }
 
-export function onCommand(p, { method, params = {}, tabId, now }) {
+/**
+ * `held`: the human's stop still holds (only resume lifts it). A command then
+ * shows the agent as stopped, never as working, whatever the bar showed before.
+ */
+export function onCommand(p, { method, params = {}, tabId, now, held = false }) {
   const label = describeCommand(method, params);
   if (label === null || p.state === "stopped") return p;
-  return activate(p, { tabId, now, label, action: ACTIONS.has(method) });
+  const next = activate(p, { tabId, now, label, action: ACTIONS.has(method) && !held });
+  return held ? { ...next, state: "stopped", enteredAt: now } : next;
 }
 
 export function onSay(p, { text = "", step = "", done = false, tabId, now }) {
@@ -118,6 +133,8 @@ export function onClearSay(p) {
 
 /** The agent said it is finished: say done, tab_close all, or its own stop. */
 export function onExplicitDone(p, { now, text = "" }) {
+  // Already done (say done, then tab_close all): keep the mark and the summary.
+  if (p.state === "done") return text ? { ...p, doneText: text } : p;
   return { ...p, state: "done", enteredAt: now, doneText: text, dismissed: false };
 }
 
