@@ -57,6 +57,30 @@ give me a 3-bullet summary."*
 
 Pointer has two parts: the Chrome extension, and the `pointer` command with its MCP server.
 
+### Let your agent set it up
+
+Paste this into Claude Code, Codex, Cursor, OpenCode, or any agent that can run shell commands. It
+installs everything it can, and asks you only for the one click Chrome reserves for you.
+
+```text
+Set up Pointer (https://github.com/longvo2k/pointer) so you can drive my Chrome. Follow its README.
+
+1. Install the command. If Node 18+ is installed, run `npm install -g @longvo2k/pointer`.
+   Otherwise read https://raw.githubusercontent.com/longvo2k/pointer/main/install.sh, then run it
+   with POINTER_NO_OPEN=1. Ask me before it changes my shell's PATH.
+2. Run `pointer setup --no-open` and use the MCP config it prints to add Pointer as an MCP server
+   in this agent (for Claude Code: `claude mcp add pointer -- <command and args it prints>`).
+3. If this agent reads Agent Skills (SKILL.md), link the `skills/pointer` folder of the install
+   into your skills folder (for Claude Code: ~/.claude/skills/pointer).
+4. Open https://chromewebstore.google.com/detail/pointer/jckadbekhgkcnjkjcoaecjjkpkkgamjl in my
+   Chrome and ask me to click "Add to Chrome". Wait until I say it is done.
+5. Run `pointer status` and check it says "Extension: connected". If not, use the README's
+   Troubleshooting section, and tell me what you need from me.
+6. Tell me what you set up, and whether I need to restart this session to load Pointer's tools.
+```
+
+### Set it up by hand
+
 **1. Add the extension** from the [Chrome Web Store](https://chromewebstore.google.com/detail/pointer/jckadbekhgkcnjkjcoaecjjkpkkgamjl). Chrome keeps it up to date.
 
 **2. Install the command**, with the installer:
