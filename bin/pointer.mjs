@@ -155,7 +155,10 @@ function setup(open) {
     }
   }
 
-  console.log("Load the Chrome extension (once):");
+  console.log("Add the Chrome extension (once):");
+  console.log("  Chrome Web Store → search for \"Pointer\" by Long Vo → Add to Chrome (the README links it)");
+  console.log("");
+  console.log("Or run the files above unpacked (to try changes; remove the store copy first):");
   console.log("  1. open chrome://extensions" + (opened ? " (opened for you)" : ""));
   console.log("  2. turn on Developer mode");
   console.log("  3. Load unpacked → choose the extension folder above");
@@ -202,7 +205,7 @@ async function main() {
     const hub = new Hub({ port: PORT, log: (m) => console.log("[hub] " + m) });
     await hub.start();
     console.log(`pointer hub ready on http://127.0.0.1:${PORT}`);
-    console.log("Run `pointer setup` to open chrome://extensions and show the extension folder.");
+    console.log("Add the extension from the Chrome Web Store, or run `pointer setup` to load it unpacked.");
     const shutdown = async () => {
       await hub.stop();
       process.exit(0);
