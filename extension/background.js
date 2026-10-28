@@ -24,6 +24,7 @@ import {
   baseGroupTitle,
   effectsOf,
   viewOf,
+  notificationText,
 } from "./presence.js";
 import { SETTINGS_KEY, withDefaults } from "./settings.js";
 
@@ -306,6 +307,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       (accepted) => sendResponse({ ok: true, accepted }),
       () => sendResponse({ ok: false })
     );
+    return true;
+  }
+  if (msg.type === "pointer:test-notification") {
+    // The settings page's Test button: shown even while the human is looking.
+    watchNotificationClicks();
+    (async () => {
+      if (!(await canNotify())) return sendResponse({ ok: false });
+      await chrome.notifications.create("pointer-test", {
+        type: "basic",
+        iconUrl: "icons/icon128.png",
+        title: "Pointer notifications work",
+        message: "You'll see this when an agent finishes or needs you.",
+        silent: !settings.sound,
+      });
+      sendResponse({ ok: true });
+    })().catch(() => sendResponse({ ok: false }));
     return true;
   }
   if (msg.type === "pointer:dismiss") {
@@ -1403,8 +1420,60 @@ function applyPresence(next) {
   if (fx.notify) notifyFor(fx.notify).catch(() => {});
 }
 
-/** Tell the human the agent finished or is waiting for them (Task: notifications). */
-async function notifyFor(kind) {}
+/** Is the human looking at the agent's tab right now (its window focused, the tab in front)? */
+async function humanIsWatching(tabId) {
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  if (!tab?.active) return false;
+  const win = await chrome.windows.getLastFocused({ windowTypes: ["normal"] }).catch(() => null);
+  return Boolean(win?.focused && win.id === tab.windowId);
+}
+
+async function canNotify() {
+  if (!chrome.notifications) return false; // absent until the human allows notifications
+  return chrome.permissions.contains({ permissions: ["notifications"] }).catch(() => false);
+}
+
+/**
+ * Tell the human the agent finished or is waiting for them: only if they turned
+ * it on, and only when they are not already looking at the agent's tab.
+ */
+async function notifyFor(kind) {
+  if (kind === "done" ? !settings.notifyDone : !settings.notifyStopped) return;
+  if (!(await canNotify())) return;
+  const tabId = presence.tabId;
+  if (tabId != null && (await humanIsWatching(tabId))) return;
+  const tab = tabId != null ? await chrome.tabs.get(tabId).catch(() => null) : null;
+  let host = "this page";
+  try {
+    if (tab?.url) host = new URL(tab.url).hostname.replace(/^www\./, "") || host;
+  } catch {}
+  const { title, message } = notificationText(kind, { agent: agentName, actions: presence.actions, host });
+  await chrome.notifications.create(`pointer-${kind}`, {
+    type: "basic",
+    iconUrl: "icons/icon128.png",
+    title,
+    message,
+    silent: !settings.sound,
+  });
+}
+
+/** Clicking a notification brings the agent's tab and window forward. */
+function watchNotificationClicks() {
+  if (!chrome.notifications || watchNotificationClicks.done) return;
+  watchNotificationClicks.done = true;
+  chrome.notifications.onClicked.addListener(async (id) => {
+    if (!id.startsWith("pointer-")) return;
+    chrome.notifications.clear(id).catch(() => {});
+    if (id === "pointer-test") return;
+    const tab = presence.tabId != null ? await chrome.tabs.get(presence.tabId).catch(() => null) : null;
+    if (!tab) return;
+    await chrome.tabs.update(tab.id, { active: true }).catch(() => {});
+    await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
+  });
+}
+watchNotificationClicks();
+// The API appears when the human grants the permission on the settings page.
+chrome.permissions?.onAdded?.addListener(() => watchNotificationClicks());
 
 async function runCommand(method, params) {
   switch (method) {
