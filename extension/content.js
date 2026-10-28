@@ -99,7 +99,8 @@
         }
         .caption .step:empty, .caption .who:empty, .caption .act:empty { display: none; }
         .caption .who {
-          flex: 0 1 auto; min-width: 0; max-width: 40%; overflow: hidden; text-overflow: ellipsis;
+          /* The text beside it wraps first; a name is cut only when it is long. */
+          flex: 0 0 auto; max-width: 40%; overflow: hidden; text-overflow: ellipsis;
           padding: 1px 8px; border-radius: 999px; background: #2563eb; color: #fff;
           font-size: 12.5px; font-weight: 600; white-space: nowrap;
         }
