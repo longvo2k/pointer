@@ -121,7 +121,7 @@ const GROUP_TITLE_MAX = 24;
 
 // Toggle when hunting a slow command; logs go to the extension worker console.
 const TRACE = false;
-const BUILD = "0.2.24";
+const BUILD = "0.2.25";
 const traceStart = Date.now();
 self.__pointerBuild = BUILD;
 // When the agent runs with POINTER_DEBUG, each call's trace goes back with its
