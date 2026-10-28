@@ -255,3 +255,19 @@ test("screenshots leave the caption out unless asked", async () => {
   await callTool(hub, "screenshot", { caption: true });
   assert.deepEqual(calls, [["page.screenshot", {}], ["page.screenshot", { caption: true }]]);
 });
+
+test("console read from the page itself says what it can miss", async () => {
+  const hub = {
+    call: async () => ({
+      started: false,
+      reloaded: false,
+      pageHook: true,
+      url: "https://x.test/login",
+      entries: [{ level: "error", text: "boom (app.js:3)" }],
+    }),
+  };
+  const out = await callTool(hub, "console", { level: "errors" });
+  assert.match(out.text, /password manager/);
+  assert.match(out.text, /1 errors on https:\/\/x\.test\/login/);
+  assert.match(out.text, /boom \(app\.js:3\)/);
+});

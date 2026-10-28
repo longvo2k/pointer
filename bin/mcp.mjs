@@ -12,6 +12,7 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { health } from "../lib/hub.mjs";
+import { debug, timed } from "../lib/debug.mjs";
 import { TOOLS, callTool } from "../lib/tools.mjs";
 
 const PORT = Number(process.env.POINTER_PORT || 8790);
@@ -20,6 +21,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function ensureHub() {
   const up = await health(PORT);
   if (up) return;
+  debug("hub not running; starting it");
+  const spawnedAt = Date.now();
   const entry = fileURLToPath(new URL("./pointer.mjs", import.meta.url));
   const child = spawn(process.execPath, [entry, "serve", "--quiet"], {
     detached: true,
@@ -29,12 +32,19 @@ async function ensureHub() {
   child.unref();
   for (let i = 0; i < 40; i++) {
     await sleep(150);
-    if (await health(PORT)) return;
+    if (await health(PORT)) {
+      debug(`hub started in ${Date.now() - spawnedAt}ms`);
+      return;
+    }
   }
   throw new Error(`Hub did not start on port ${PORT}`);
 }
 
 async function rpc(method, params = {}) {
+  return timed(`rpc ${method}`, rpcOnce(method, params));
+}
+
+async function rpcOnce(method, params) {
   const res = await fetch(`http://127.0.0.1:${PORT}/rpc`, {
     method: "POST",
     headers: { "content-type": "application/json" },
