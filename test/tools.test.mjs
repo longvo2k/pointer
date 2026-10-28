@@ -208,6 +208,21 @@ test("captions are one line, capped, and checked", () => {
   assert.throws(() => resolveCaption({ text: "hi", seconds: 9999 }), /seconds/);
 });
 
+test("say done needs no text", () => {
+  assert.deepEqual(resolveCaption({ done: true }), { done: true });
+  assert.deepEqual(resolveCaption({ done: true, text: " All  set " }), { done: true, text: "All set" });
+});
+
+test("say without text or done still fails", () => {
+  assert.throws(() => resolveCaption({}), /caption text/);
+});
+
+test("the say tool offers done", () => {
+  const say = TOOLS.find((t) => t.name === "say");
+  assert.equal(say.inputSchema.properties.done.type, "boolean");
+  assert.match(say.description, /done: true/);
+});
+
 test("say shows a caption, and clear removes it", async () => {
   const calls = [];
   const hub = {
