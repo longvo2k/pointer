@@ -259,3 +259,17 @@ test("a command while the human's stop holds shows the agent as stopped", () => 
   const resumed = onCommand(initialPresence(), { method: "page.snapshot", params: {}, tabId: 7, now: 3000, held: false });
   assert.equal(resumed.state, "active");
 });
+
+test("reads after say done keep the done mark; an action starts a new task", () => {
+  const done = onSay(cmd(active(), "page.act", {}, 1500), { done: true, text: "All set", tabId: 7, now: 2000 });
+  for (const method of ["page.screenshot", "page.snapshot", "page.text", "page.find", "page.wait", "page.layout", "tabs.select"]) {
+    const after = cmd(done, method, {}, 2500);
+    assert.equal(after.state, "done", method);
+    assert.equal(after.doneText, "All set", method);
+    assert.equal(after.actions, 2, method);
+    assert.equal(groupPrefix(after), "✅ ", method);
+  }
+  for (const method of ["page.act", "page.fill", "page.press", "tabs.open", "page.navigate"]) {
+    assert.equal(cmd(done, method, { url: "https://example.com" }, 2500).state, "active", method);
+  }
+});

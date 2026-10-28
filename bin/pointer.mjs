@@ -418,7 +418,7 @@ function usage() {
   pointer press <key>
   pointer scroll [up|down] [px]
   pointer text                  page as readable text
-  pointer shot [path] [--caption]  screenshot (pointer included; the caption only with --caption)
+  pointer shot [path] [--caption]  screenshot (Pointer's cursor, bar and edge only with --caption)
   pointer viewport <preset|W H> emulate mobile, tablet, desktop, or W H [--mobile]; reset when done
   pointer layout [--screen]     find overflow, clipped text, overlaps, small targets, tight padding, uneven gaps
   pointer dialog accept|dismiss [text]  answer an alert/confirm/prompt
