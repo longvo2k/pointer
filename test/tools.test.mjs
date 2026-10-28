@@ -286,3 +286,9 @@ test("console read from the page itself says what it can miss", async () => {
   assert.match(out.text, /1 errors on https:\/\/x\.test\/login/);
   assert.match(out.text, /boom \(app\.js:3\)/);
 });
+
+test("screenshot help says what is left out of the image", () => {
+  const shot = TOOLS.find((t) => t.name === "screenshot");
+  assert.doesNotMatch(shot.description, /Includes the pointer/);
+  assert.match(shot.description, /left out unless you pass caption: true/);
+});

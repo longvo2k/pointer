@@ -198,8 +198,8 @@ Notes that save a round trip:
   not only in chat: `say` with the step and what to look for, or `say` on the action itself
   (`click e10 --say "The preview stops at 15 seconds"`). Keep each caption to one or two short
   sentences, put a counter in `step` when there is a plan, pass `ref` to outline what you describe,
-  and `say --clear` when the demo ends. Captions are left out of `screenshot` unless you pass
-  `caption: true`. Do not caption routine work nobody is watching.
+  and `say --clear` when the demo ends. The caption, bar and pointer are left out of `screenshot`
+  unless you pass `caption: true`. Do not caption routine work nobody is watching.
 - Prefer MCP tools when they are registered. The CLI is the same bridge, so mixing them in one task
   is fine. `--json` on any CLI command returns machine-readable output.
 

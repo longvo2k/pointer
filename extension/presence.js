@@ -117,6 +117,9 @@ function activate(p, { tabId, now, label = "", action = false }) {
 export function onCommand(p, { method, params = {}, tabId, now, held = false }) {
   const label = describeCommand(method, params);
   if (label === null || p.state === "stopped") return p;
+  // After say done, agents often look once more (a screenshot for their report).
+  // Only an action that changes the page starts a new task; a look keeps the ✅.
+  if (p.state === "done" && !held && !ACTIONS.has(method)) return p;
   const next = activate(p, { tabId, now, label, action: ACTIONS.has(method) && !held });
   return held ? { ...next, state: "stopped", enteredAt: now } : next;
 }
