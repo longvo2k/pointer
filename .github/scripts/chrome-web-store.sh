@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Upload a zip to the Chrome Web Store and submit it for review.
+# Upload a zip to the Chrome Web Store and submit it for review, replacing a
+# version that is still in review.
 #
 #   chrome-web-store.sh <zip>
 #
@@ -30,6 +31,21 @@ call() {
     return 1
   fi
 }
+
+# The store refuses a new upload while an earlier version is in review. That
+# version is older than this one, whose zip holds all its changes, so cancel
+# its review and submit this one instead.
+status="$(call "${api}/v2/${item}:fetchStatus")"
+pending="$(jq -r 'select(.submittedItemRevisionStatus.state == "PENDING_REVIEW")
+  | [.submittedItemRevisionStatus.distributionChannels[]?.crxVersion] | join(", ")' <<<"$status")"
+version="$(unzip -p "$zip" manifest.json | jq -r .version)"
+if [[ "$pending" == "$version" ]]; then
+  echo "Version ${version} is already in review; nothing to do."
+  exit 0
+elif [[ -n "$pending" ]]; then
+  echo "Version ${pending} is still in review; cancelling it so this version replaces it."
+  call -X POST -H "Content-Length: 0" "${api}/v2/${item}:cancelSubmission" >/dev/null
+fi
 
 echo "Uploading $zip"
 upload="$(call -X POST -T "$zip" "${api}/upload/v2/${item}:upload")"
