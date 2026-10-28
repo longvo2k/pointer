@@ -33,6 +33,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { Hub, health } from "../lib/hub.mjs";
+import { debug, timed } from "../lib/debug.mjs";
 import { TOOLS, callTool } from "../lib/tools.mjs";
 
 const PORT = Number(process.env.POINTER_PORT || 8790);
@@ -59,6 +60,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function ensureHub() {
   const up = await health(PORT);
   if (up) return up;
+  debug("hub not running; starting it");
+  const spawnedAt = Date.now();
   const entry = fileURLToPath(new URL("./pointer.mjs", import.meta.url));
   const child = spawn(process.execPath, [entry, "serve", "--quiet"], {
     detached: true,
@@ -69,12 +72,19 @@ async function ensureHub() {
   for (let i = 0; i < 40; i++) {
     await sleep(150);
     const h = await health(PORT);
-    if (h) return h;
+    if (h) {
+      debug(`hub started in ${Date.now() - spawnedAt}ms`);
+      return h;
+    }
   }
   throw new Error("Could not start the local hub on port " + PORT);
 }
 
 async function rpc(method, params = {}) {
+  return timed(`rpc ${method}`, rpcOnce(method, params));
+}
+
+async function rpcOnce(method, params) {
   const res = await fetch(`http://127.0.0.1:${PORT}/rpc`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -413,7 +423,10 @@ function usage() {
   pointer resume                continue after the human stopped the agent (ask them first)
   pointer setup [--no-open]     show install paths, open chrome://extensions
 
-  env: POINTER_PORT (8790), POINTER_FOCUS_WINDOW=0, POINTER_AGENT=<name>`;
+  env: POINTER_PORT (8790), POINTER_FOCUS_WINDOW=0, POINTER_AGENT=<name>,
+       POINTER_DEBUG=1|<file>  timing for each step (to stderr, or appended to the file)`;
 }
 
+const startedAt = Date.now();
+process.on("exit", () => debug(`pointer ${cmd || ""} done in ${Date.now() - startedAt}ms`));
 main().catch(fail);

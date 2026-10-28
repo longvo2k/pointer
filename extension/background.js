@@ -771,6 +771,79 @@ chrome.debugger.onEvent.addListener((source, method, p) => {
   }
 });
 
+// Console capture without the debugger. Chrome refuses the debugger on a page
+// that holds another extension's frame (a password manager's), so a hook in
+// the page itself records console calls and uncaught errors from now on.
+// It lives in the document: a navigation or reload removes it.
+function installConsoleHook() {
+  if (window.__pointerConsole) return;
+  const logs = [];
+  const text = (a) => {
+    if (typeof a === "string") return a;
+    if (a instanceof Error) return String(a.stack || a).split("\n")[0];
+    try {
+      return JSON.stringify(a) ?? String(a);
+    } catch {
+      return String(a);
+    }
+  };
+  const push = (level, msg) => {
+    logs.push({ at: Date.now(), level, text: msg });
+    if (logs.length > 300) logs.splice(0, logs.length - 300);
+  };
+  const levels = { log: "log", info: "log", debug: "debug", warn: "warning", error: "error" };
+  for (const [name, level] of Object.entries(levels)) {
+    const orig = console[name];
+    console[name] = function (...args) {
+      try {
+        push(level, args.map(text).join(" "));
+      } catch {}
+      return orig.apply(this, args);
+    };
+  }
+  addEventListener(
+    "error",
+    (e) => {
+      if (e.target && e.target !== window) {
+        const src = e.target.src || e.target.href || "";
+        return push("error", `Failed to load ${String(e.target.tagName || "resource").toLowerCase()} ${src.slice(0, 100)}`);
+      }
+      const file = e.filename ? ` (${e.filename.split(/[?#]/)[0].split("/").pop()}:${e.lineno})` : "";
+      push("error", (e.error ? text(e.error) : e.message || "Uncaught error") + file);
+    },
+    true
+  );
+  addEventListener("unhandledrejection", (e) => push("error", `Uncaught (in promise) ${text(e.reason)}`));
+  Object.defineProperty(window, "__pointerConsole", { value: logs });
+}
+
+function readConsoleHook(clear) {
+  const logs = window.__pointerConsole;
+  if (!logs) return null;
+  const out = logs.slice();
+  if (clear) logs.length = 0;
+  return out;
+}
+
+async function pageConsole(tab, params) {
+  const run = (func, args = []) =>
+    chrome.scripting.executeScript({ target: { tabId: tab.id }, world: "MAIN", func, args }).then((r) => r?.[0]?.result);
+  if (params.reload) {
+    assertNoDialog(tab.id);
+    await chrome.tabs.reload(tab.id);
+    await sleep(200);
+    await waitForLoad(tab.id, 20000);
+    await markTab(tab.id);
+  }
+  let entries = await run(readConsoleHook, [Boolean(params.clear)]);
+  const started = entries == null;
+  if (started) {
+    await run(installConsoleHook);
+    entries = [];
+  }
+  return { started, reloaded: Boolean(params.reload), url: (await chrome.tabs.get(tab.id)).url, entries, pageHook: true };
+}
+
 /** Turn on console or network capture for a tab. Returns true if it was off. */
 async function startCapture(tabId, kind) {
   const c = captureFor(tabId);
@@ -1396,28 +1469,37 @@ async function dispatch(method, params) {
         const markAgentInput = () =>
           page(tab.id, "pointer:agent-window", { ms: 2000 }).catch(() => {});
         let synthetic = false;
-        if (action === "click") {
-          try {
-            const { dialog } = await raceDialog(tab.id, clickAt(tab.id, spot.x, spot.y, markAgentInput));
-            if (dialog) return { ok: true, target: { role: spot.role, name: spot.name }, url: tab.url, dialog };
-          } catch (err) {
-            if (!debuggerBlocked(err)) throw err;
-            await page(tab.id, "pointer:domclick", params);
-            synthetic = true;
+        const nav = watchNavigation(tab.id, 10000);
+        try {
+          if (action === "click") {
+            try {
+              const { dialog } = await raceDialog(tab.id, clickAt(tab.id, spot.x, spot.y, markAgentInput));
+              if (dialog) {
+                nav.cancel();
+                return { ok: true, target: { role: spot.role, name: spot.name }, url: tab.url, dialog };
+              }
+            } catch (err) {
+              if (!debuggerBlocked(err)) throw err;
+              await page(tab.id, "pointer:domclick", params);
+              synthetic = true;
+            }
+          } else if (action === "hover") {
+            try {
+              await mouseTo(tab.id, spot.x, spot.y);
+            } catch (err) {
+              if (!debuggerBlocked(err)) throw err;
+              await page(tab.id, "pointer:domhover", params);
+              synthetic = true;
+            }
           }
-        } else if (action === "hover") {
-          try {
-            await mouseTo(tab.id, spot.x, spot.y);
-          } catch (err) {
-            if (!debuggerBlocked(err)) throw err;
-            await page(tab.id, "pointer:domhover", params);
-            synthetic = true;
-          }
+        } catch (err) {
+          nav.cancel();
+          throw err;
         }
         trace("act input done");
 
         // Give the page a beat to react so the report sees the result.
-        await sleep(clampMs(params.settleMs, 240, 5000));
+        await settle(tab.id, nav, clampMs(params.settleMs, 240, 5000));
         const changes = await collectChanges(tab.id, docId);
         const after = await chrome.tabs.get(tab.id);
         trace("act done");
@@ -1457,25 +1539,68 @@ async function dispatch(method, params) {
         // Date, time, color and range inputs are segmented pickers that ignore
         // typed text; setting the value directly is the only reliable way.
         const pickerInput = PICKER_INPUTS.has(spot.inputType);
+        const text = String(params.text ?? "");
+        const field = { ref: params.ref, selector: params.selector };
         let synthetic = params.trusted === false;
-        const domFill = async () => {
-          await page(tab.id, "pointer:domfill", { ref: params.ref, selector: params.selector, text: params.text });
-          if (params.submit) await page(tab.id, "pointer:dompress", { key: "Enter" });
+        const readValue = () => page(tab.id, "pointer:value", field).then((r) => r.value, () => null);
+        const domSet = () => page(tab.id, "pointer:domfill", { ...field, text });
+        // With another extension's frame on the page, Chrome can drop trusted
+        // input without an error. Count the fill as landed only if the field
+        // holds the text, or at least changed (masked inputs reformat it).
+        let before = null;
+        const landed = async () => {
+          if (!text) return true;
+          const now = await readValue();
+          return now === null || now === text || (now !== "" && now !== before);
         };
+        const assertLanded = async () => {
+          if (await landed()) return;
+          throw new Error(
+            `The text did not reach "${label}": the field is still ${before ? "unchanged" : "empty"}. ` +
+              "Another extension's frame (often a password manager) may be taking the input. " +
+              "Ask the human to close that popup, then try again."
+          );
+        };
+        const submit = () =>
+          synthetic || pickerInput ? page(tab.id, "pointer:dompress", { key: "Enter" }) : pressKey(tab.id, "Enter");
+        const nav = watchNavigation(tab.id, 10000);
         const typing = (async () => {
-          if (synthetic || pickerInput) return domFill();
-          await fillAt(tab.id, spot.x, spot.y, params.text ?? "", markAgentInput);
-          if (params.submit) await pressKey(tab.id, "Enter");
+          if (synthetic || pickerInput) {
+            await domSet();
+          } else {
+            before = await readValue();
+            await fillAt(tab.id, spot.x, spot.y, text, markAgentInput);
+            if (!(await landed())) {
+              trace("fill did not land; using page events");
+              await domSet();
+              synthetic = true;
+            }
+          }
+          if (synthetic) await assertLanded();
+          if (params.submit) await submit();
         })();
         try {
           const { dialog } = await raceDialog(tab.id, typing);
-          if (dialog) return { ok: true, target: label, url: tab.url, dialog };
+          if (dialog) {
+            nav.cancel();
+            return { ok: true, target: label, url: tab.url, dialog };
+          }
         } catch (err) {
-          if (!debuggerBlocked(err)) throw err;
-          await domFill();
+          if (!debuggerBlocked(err)) {
+            nav.cancel();
+            throw err;
+          }
           synthetic = true;
+          try {
+            await domSet();
+            await assertLanded();
+            if (params.submit) await submit();
+          } catch (err2) {
+            nav.cancel();
+            throw err2;
+          }
         }
-        await sleep(params.submit ? 240 : 120);
+        await settle(tab.id, nav, params.submit ? 240 : 120, params.submit ? 800 : 150);
         const changes = await collectChanges(tab.id, docId);
         return { ok: true, target: label, url: (await chrome.tabs.get(tab.id)).url, changes, synthetic, opened: await spawnedTabs(tab.id) };
       });
@@ -1491,18 +1616,28 @@ async function dispatch(method, params) {
       return await withBackgroundInput(tab, async () => {
         await page(tab.id, "pointer:agent-window", { ms: 2000 });
         const docId = await takeBaseline(tab.id);
+        const key = params.key || "Enter";
+        // Enter often submits a form: notice the page load so the report
+        // describes the new page, not the one being left.
+        const nav = watchNavigation(tab.id, 10000);
         let synthetic = false;
         try {
-          const { dialog } = await raceDialog(tab.id, pressKey(tab.id, params.key || "Enter"));
-          if (dialog) return { ok: true, key: params.key || "Enter", url: tab.url, dialog };
+          const { dialog } = await raceDialog(tab.id, pressKey(tab.id, key));
+          if (dialog) {
+            nav.cancel();
+            return { ok: true, key, url: tab.url, dialog };
+          }
         } catch (err) {
-          if (!debuggerBlocked(err)) throw err;
-          await page(tab.id, "pointer:dompress", { key: params.key || "Enter" });
+          if (!debuggerBlocked(err)) {
+            nav.cancel();
+            throw err;
+          }
+          await page(tab.id, "pointer:dompress", { key });
           synthetic = true;
         }
-        await sleep(240);
+        const navigated = await settle(tab.id, nav, 240, key === "Enter" ? 800 : 150);
         const changes = await collectChanges(tab.id, docId);
-        return { ok: true, key: params.key || "Enter", url: (await chrome.tabs.get(tab.id)).url, changes, synthetic, opened: await spawnedTabs(tab.id) };
+        return { ok: true, key, url: (await chrome.tabs.get(tab.id)).url, navigated, changes, synthetic, opened: await spawnedTabs(tab.id) };
       });
     }
 
@@ -1604,7 +1739,17 @@ async function dispatch(method, params) {
       if (params.reload) assertNotStopped();
       const tab = await resolveTab(params);
       lastTabId = tab.id;
-      const started = await startCapture(tab.id, kind);
+      let started;
+      try {
+        started = await startCapture(tab.id, kind);
+      } catch (err) {
+        if (!debuggerBlocked(err)) throw err;
+        if (kind === "console") return await pageConsole(tab, params);
+        throw new Error(
+          "Chrome blocks network capture on this page because another extension (often a password manager) " +
+            "put a frame on it. Ask the human to close that popup, then try again."
+        );
+      }
       if (params.reload) {
         assertNoDialog(tab.id);
         await chrome.tabs.reload(tab.id);
@@ -1842,6 +1987,20 @@ function watchNavigation(tabId, timeout = 3000) {
     chrome.tabs.onUpdated.addListener(listener);
   });
   return { promise, cancel: () => finish(false) };
+}
+
+/**
+ * Give the page a beat to react to input. If the input started a page load
+ * (a submit, a link), wait for the new page so the report describes it.
+ * `grace` is how long to keep watching for a load that starts late, such as
+ * a form whose script checks the fields before it submits.
+ */
+async function settle(tabId, nav, ms, grace = 150) {
+  await sleep(ms);
+  const navigated = await Promise.race([nav.promise, sleep(grace).then(() => false)]);
+  nav.cancel();
+  if (navigated) await waitForLoad(tabId, 10000);
+  return navigated;
 }
 
 async function waitForLoad(tabId, timeout = 20000) {

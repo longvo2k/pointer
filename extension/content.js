@@ -1483,6 +1483,16 @@
             }, 0);
             return;
           }
+          case "pointer:value": {
+            // A field's current text, so a fill can check that it landed.
+            // null when the target is not a text field we can read.
+            const el = resolve(msg.params || {});
+            if (el.isContentEditable) return sendResponse({ ok: true, value: el.textContent ?? "" });
+            if (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT") {
+              return sendResponse({ ok: true, value: String(el.value ?? "") });
+            }
+            return sendResponse({ ok: true, value: null });
+          }
           case "pointer:domfill": {
             const p = msg.params || {};
             const el = p.ref ? findByRef(p.ref) : find(p.selector);

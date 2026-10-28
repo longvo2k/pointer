@@ -296,7 +296,19 @@ tried to reach the hub while it was not running. It keeps retrying and connects 
 
 **A result says "sent as page events".** Password managers such as 1Password put their own frame
 into some pages, and Chrome then refuses debugger input on that tab. Pointer falls back to page
-events for click, fill, and press. Most sites accept them; file upload has no fallback.
+events for click, fill, and press. Most sites accept them; file upload has no fallback. Chrome can
+also drop typed text there without an error, so `fill` checks the field afterwards: if the text did
+not land it retries with page events, and fails with a message if the field is still empty.
+
+**`console` says messages are read from the page itself.** On those same pages Chrome refuses the
+debugger, so Pointer hooks the page's console instead. It sees messages only from its first
+`console` call on that page, and a reload or navigation clears them. `network` has no such
+fallback and asks you to close the password manager's popup.
+
+**A command was slow and you want to know where the time went.** Set `POINTER_DEBUG=1` to print the
+time of each step to stderr, or `POINTER_DEBUG=/tmp/pointer.log` to append it to a file. The file
+form also logs the background hub, as long as the hub was started with it set (stop the old hub
+with `pkill -f "pointer.mjs serve"` first).
 
 **The agent stopped and asks before continuing.** You pressed `Esc`, `Alt+Shift+S`, the popup's
 Stop, or clicked in the agent's tab while it was on screen. That is the stop signal, by design: every
