@@ -6,6 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![No telemetry](https://img.shields.io/badge/telemetry-none-brightgreen.svg)
 ![Runtime deps: 1](https://img.shields.io/badge/runtime%20deps-1-brightgreen.svg)
+[![Chrome Web Store](https://img.shields.io/chrome-web-store/v/jckadbekhgkcnjkjcoaecjjkpkkgamjl?label=chrome%20web%20store)](https://chromewebstore.google.com/detail/pointer/jckadbekhgkcnjkjcoaecjjkpkkgamjl)
 
 Let any agent drive your real Chrome tab, with a pointer you can watch.
 
@@ -54,42 +55,43 @@ give me a 3-bullet summary."*
 
 ## Install
 
+Pointer has two parts: the Chrome extension, and the `pointer` command with its MCP server.
+
+**1. Add the extension** from the [Chrome Web Store](https://chromewebstore.google.com/detail/pointer/jckadbekhgkcnjkjcoaecjjkpkkgamjl). Chrome keeps it up to date.
+
+**2. Install the command**, with the installer:
+
 ```bash
-curl -fsSL https://raw.githubusercontent.com/longvo2k/pointer/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/longvo2k/pointer/main/install.sh | POINTER_NO_OPEN=1 bash
 ```
 
-This installs the latest release into `~/.pointer`, installs its one dependency, links `pointer`
-and `pointer-mcp` into `~/.local/bin`, and opens `chrome://extensions` with the extension folder
-revealed. It asks before adding `~/.local/bin` to your shell's `PATH`. Run it again to update. Set
-`POINTER_DIR` to install elsewhere, `POINTER_REF` to pick a version, or `POINTER_NO_OPEN=1` to skip
-opening Chrome.
+This installs the latest release into `~/.pointer`, installs its one dependency, and links `pointer`
+and `pointer-mcp` into `~/.local/bin`. It asks before adding `~/.local/bin` to your shell's `PATH`.
+Run it again to update. Set `POINTER_DIR` to install elsewhere or `POINTER_REF` to pick a version.
+(`POINTER_NO_OPEN=1` skips opening `chrome://extensions`, which is only needed for the unpacked copy
+below.)
 
 Prefer to read it first? The installer is about 100 lines:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/longvo2k/pointer/main/install.sh -o install.sh
 less install.sh
-bash install.sh
+POINTER_NO_OPEN=1 bash install.sh
 ```
 
 Or install from npm, if you already use Node 18 or newer:
 
 ```bash
 npm install -g @longvo2k/pointer
-pointer setup
 ```
 
-Each npm release is built by this repo's [publish workflow](.github/workflows/release.yml) and
-carries a [provenance](https://docs.npmjs.com/generating-provenance-statements) record that links
-it to the exact commit. `npm install -g @longvo2k/pointer` again updates it. Then reload Pointer at
-`chrome://extensions`.
+Each npm release and each Web Store version is built by this repo's
+[release workflow](.github/workflows/release.yml) from the same commit. The npm package carries a
+[provenance](https://docs.npmjs.com/generating-provenance-statements) record that links it to that
+commit. `npm install -g @longvo2k/pointer` again updates it. A new extension version reaches you
+once the Web Store has reviewed it, which can take a day or so after the npm release.
 
-Then load the extension once (Chrome does not let a script install an unpacked extension):
-
-1. `chrome://extensions` → turn on **Developer mode** → **Load unpacked**
-2. choose `~/.pointer/extension` (with npm, the folder `pointer setup` prints)
-
-The toolbar badge reads `on` once it connects. Check it:
+The toolbar badge reads `on` once the extension connects. Check it:
 
 ```bash
 pointer status
@@ -97,13 +99,26 @@ pointer open news.ycombinator.com
 pointer snap
 ```
 
-`pointer setup` reopens the extension page, copies the folder path, and prints an MCP config with
-your real paths.
+`pointer setup` prints an MCP config with your real paths.
+
+<details>
+<summary>Load the extension unpacked instead</summary>
+
+To run the extension from the files on disk, for example to try a change before it is in the store:
+
+1. `chrome://extensions` → turn on **Developer mode** → **Load unpacked**
+2. choose `~/.pointer/extension` (with npm, the folder `pointer setup` prints)
+
+Remove the Web Store copy first, so only one Pointer runs. `pointer setup` opens the extension page
+and copies the folder path. An unpacked copy does not update itself: after updating Pointer, reload it
+at `chrome://extensions`.
+
+</details>
 
 <details>
 <summary>Uninstall</summary>
 
-1. `chrome://extensions` → Pointer → **Remove**
+1. Right-click the Pointer icon in the toolbar → **Remove from Chrome** (or `chrome://extensions` → Pointer → **Remove**)
 2. `pkill -f "pointer.mjs serve"` to stop the hub
 3. `rm -rf ~/.pointer ~/.local/bin/pointer ~/.local/bin/pointer-mcp`
    (or `npm uninstall -g @longvo2k/pointer` if you installed from npm)
@@ -121,7 +136,8 @@ npm install
 node bin/pointer.mjs setup
 ```
 
-Use `node bin/pointer.mjs …` wherever this README says `pointer …`.
+Use `node bin/pointer.mjs …` wherever this README says `pointer …`. Load `extension/` unpacked (see
+above) to run your changes; remove the Web Store copy first.
 
 </details>
 
@@ -281,7 +297,7 @@ pointer use auto         # follow the profile you use again
 
 ## Troubleshooting
 
-**The change is not there after editing the extension.** Chrome can keep running an old copy of an
+**The change is not there after editing the extension** (unpacked copy). Chrome can keep running an old copy of an
 unpacked extension even after Reload: the card shows the new version while the old code runs.
 `pointer browsers` flags this as `⚠ stale`. Click **Remove** on `chrome://extensions`, then **Load
 unpacked** again. On Chrome 137+ a reloaded unpacked extension can also be disabled as an
