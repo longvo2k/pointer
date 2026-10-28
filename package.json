@@ -42,7 +42,8 @@
     "serve": "node bin/pointer.mjs serve",
     "mcp": "node bin/mcp.mjs",
     "test": "node --test",
-    "check": "node -e \"for (const f of require('fs').readdirSync('extension').filter(f=>f.endsWith('.js'))) require('child_process').execFileSync(process.execPath,['--check','extension/'+f])\" && node --check bin/pointer.mjs && node --check bin/mcp.mjs && node --check lib/hub.mjs && node --check lib/debug.mjs && node --check lib/tools.mjs"
+    "check": "node -e \"for (const f of require('fs').readdirSync('extension').filter(f=>f.endsWith('.js'))) require('child_process').execFileSync(process.execPath,['--check','extension/'+f])\" && node --check bin/pointer.mjs && node --check bin/mcp.mjs && node --check lib/hub.mjs && node --check lib/debug.mjs && node --check lib/tools.mjs && node --check scripts/release.mjs",
+    "release": "node scripts/release.mjs"
   },
   "dependencies": {
     "ws": "^8.18.0"

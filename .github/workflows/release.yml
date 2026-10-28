@@ -1,18 +1,75 @@
-name: Publish to npm
+name: Release
 
-# Runs when a version tag (v1.2.3) is pushed. The package is built here, in public,
-# and npm records that link (provenance), so anyone can check what it came from.
-# Publishing uses npm trusted publishing: GitHub proves to npm that this workflow,
-# in this repo and environment, is the one publishing. No npm token is stored.
+# Releases happen when a version bump lands on main (npm run release <version>,
+# then merge the PR). If the version in package.json has no tag yet, this
+# workflow tags it, publishes the npm package, and submits the extension to the
+# Chrome Web Store. Pushes that do not change the version do nothing.
+#
+# Neither publish stores a token. npm uses trusted publishing and Google uses
+# Workload Identity Federation: GitHub proves to each that this workflow, in this
+# repo and environment, is the one publishing. npm also records provenance, so
+# anyone can check what the package was built from.
+#
+# If a publish fails, fix the cause and use "Re-run failed jobs" on the run.
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
-  publish:
+  version:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # push the version tag
+    outputs:
+      release: ${{ steps.check.outputs.release }}
+      tag: ${{ steps.check.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Is this a new version?
+        id: check
+        run: |
+          v="$(node -p "require('./package.json').version")"
+          tag="v$v"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+            echo "$tag is already released; nothing to do."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          bad=0
+          check() { [ "$2" = "$v" ] || { echo "$1 says $2, package.json says $v"; bad=1; }; }
+          check extension/manifest.json "$(node -p "require('./extension/manifest.json').version")"
+          check package-lock.json "$(node -p "require('./package-lock.json').version")"
+          check "extension/background.js BUILD" "$(sed -nE 's/^const BUILD = "([^"]+)";/\1/p' extension/background.js)"
+          check "bin/mcp.mjs serverInfo" "$(sed -nE 's/.*serverInfo: \{[^}]*version: "([^"]+)".*/\1/p' bin/mcp.mjs)"
+          [ "$bad" = 0 ] || { echo "Run npm run release $v to update every copy of the version."; exit 1; }
+          echo "release=true" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.check.outputs.release == 'true'
+        with:
+          node-version: 22
+          cache: npm
+      - if: steps.check.outputs.release == 'true'
+        run: npm ci && npm run check && npm test
+      - name: Tag the release
+        if: steps.check.outputs.release == 'true'
+        env:
+          TAG: ${{ steps.check.outputs.tag }}
+        run: |
+          git tag "$TAG" "$GITHUB_SHA"
+          git push origin "$TAG"
+
+  npm:
+    needs: version
+    if: needs.version.outputs.release == 'true'
     runs-on: ubuntu-latest
     environment: npm
     permissions:
@@ -25,17 +82,50 @@ jobs:
           node-version: 22
           registry-url: https://registry.npmjs.org
           cache: npm
-      - name: Tag matches package.json and the extension
-        run: |
-          tag="${GITHUB_REF_NAME#v}"
-          pkg="$(node -p "require('./package.json').version")"
-          ext="$(node -p "require('./extension/manifest.json').version")"
-          if [ "$tag" != "$pkg" ] || [ "$tag" != "$ext" ]; then
-            echo "Tag $tag, package.json $pkg, manifest $ext must all match."; exit 1
-          fi
       - name: npm with trusted publishing support
         run: npm install -g npm@11.21.1
       - run: npm ci
-      - run: npm run check
-      - run: npm test
       - run: npm publish --provenance --access public
+
+  chrome-web-store:
+    needs: version
+    if: needs.version.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    environment: chrome-web-store
+    permissions:
+      contents: write # attach the zip to the GitHub release
+      id-token: write # signs in to Google without a stored key
+    env:
+      TAG: ${{ needs.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build the zip
+        run: |
+          zip_name="pointer-extension-$TAG.zip"
+          (cd extension && zip -qr -X "../$zip_name" . -x '.*' '*/.*')
+          unzip -l "$zip_name"
+          echo "ZIP=$zip_name" >> "$GITHUB_ENV"
+      # Workload Identity Federation: GitHub proves this workflow's identity to
+      # Google, which hands back a short-lived token for the service account the
+      # Web Store dashboard trusts. No Google key is stored anywhere.
+      - id: google
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          token_format: access_token
+          access_token_scopes: https://www.googleapis.com/auth/chromewebstore
+          create_credentials_file: false
+      - name: Upload and submit for review
+        env:
+          CWS_TOKEN: ${{ steps.google.outputs.access_token }}
+          CWS_PUBLISHER_ID: ${{ vars.CWS_PUBLISHER_ID }}
+          CWS_EXTENSION_ID: jckadbekhgkcnjkjcoaecjjkpkkgamjl
+        run: .github/scripts/chrome-web-store.sh "$ZIP"
+      - name: Attach the zip to the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$TAG" >/dev/null 2>&1 \
+            || gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes
+          gh release upload "$TAG" "$ZIP" --clobber
