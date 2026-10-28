@@ -105,6 +105,9 @@ jobs:
           (cd extension && zip -qr -X "../$zip_name" . -x '.*' '*/.*')
           unzip -l "$zip_name"
           echo "ZIP=$zip_name" >> "$GITHUB_ENV"
+          # The agent skill on its own, for skill marketplaces and manual installs.
+          (cd skills && zip -qr -X "../pointer-skill-$TAG.zip" pointer -x '*/.*')
+          echo "SKILL_ZIP=pointer-skill-$TAG.zip" >> "$GITHUB_ENV"
       # Workload Identity Federation: GitHub proves this workflow's identity to
       # Google, which hands back a short-lived token for the service account the
       # Web Store dashboard trusts. No Google key is stored anywhere.
@@ -122,10 +125,10 @@ jobs:
           CWS_PUBLISHER_ID: ${{ vars.CWS_PUBLISHER_ID }}
           CWS_EXTENSION_ID: jckadbekhgkcnjkjcoaecjjkpkkgamjl
         run: .github/scripts/chrome-web-store.sh "$ZIP"
-      - name: Attach the zip to the GitHub release
+      - name: Attach the zips to the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release view "$TAG" >/dev/null 2>&1 \
             || gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes
-          gh release upload "$TAG" "$ZIP" --clobber
+          gh release upload "$TAG" "$ZIP" "$SKILL_ZIP" --clobber

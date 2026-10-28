@@ -22,18 +22,37 @@ from browsing.
 
 ## Running it
 
-The loader prints this skill's base directory — for the default install,
-`~/.claude/skills/pointer`. Use the path it reports, and work from there so the relative wrapper
-resolves:
+Work from this skill's base directory (the loader prints it; for Claude Code it is usually
+`~/.claude/skills/pointer`), so the bundled wrapper resolves:
 
 ```bash
 cd ~/.claude/skills/pointer
 ./scripts/pointer status
 ```
 
-All examples below assume that directory. If you are in the Pointer checkout instead, the same
-wrapper is at `skills/pointer/scripts/pointer`; if neither exists, call `node <repo>/bin/pointer.mjs`
-directly.
+All examples below assume that directory. The wrapper finds Pointer wherever it is installed: the
+checkout it lives in, `~/.pointer` (the installer), or a `pointer` command from npm. If Pointer's
+MCP tools are registered in this session, you can use them instead; they are the same bridge.
+
+## First use: set Pointer up if it is missing
+
+If the wrapper prints `Pointer is not installed`, or `status` says the extension is not connected,
+set it up with the human. Ask before installing anything.
+
+1. **Install the command.** If Node 18+ is available: `npm install -g @longvo2k/pointer`.
+   Otherwise read the installer at https://raw.githubusercontent.com/longvo2k/pointer/main/install.sh,
+   then run it with `POINTER_NO_OPEN=1`. It asks before changing the shell's `PATH`.
+2. **Add the extension.** Open
+   https://chromewebstore.google.com/detail/pointer/jckadbekhgkcnjkjcoaecjjkpkkgamjl in the human's
+   Chrome and ask them to click **Add to Chrome**. Only they can do this step. Wait until they say
+   it is done.
+3. **Optional: register the MCP server.** `pointer setup --no-open` prints the config for this
+   agent (for Claude Code: `claude mcp add pointer -- pointer-mcp`). The tools load in a new session;
+   the CLI works right away.
+4. **Check:** `./scripts/pointer status` should say `Extension: connected`.
+
+Pointer is open source (MIT): https://github.com/longvo2k/pointer. It talks only to `127.0.0.1`
+and sends nothing elsewhere.
 
 The tab group and title badge use the hub's agent name. Set it before the hub starts if the default
 `agent` is not recognizable:
