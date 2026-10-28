@@ -66,5 +66,6 @@ The extension asks for these Chrome permissions, and needs each one:
 | `<all_urls>` (host access) | Reads the pages the agent works on and draws the cursor there. |
 | `scripting` | Injects the snapshot and cursor script into a tab that loaded before the extension. |
 | `tabs`, `tabGroups` | Opens, lists, and groups the agent's tabs. |
-| `storage` | Remembers a random id for this browser and when its window was last focused. |
+| `storage` | Remembers a random id for this browser, when its window was last focused, your settings, and what the bar shows. |
+| `notifications` (optional) | Only if you turn notifications on in the settings: tells you when the agent finishes or waits for you. Chrome asks first. |
 | `alarms` | Reconnects to the hub after Chrome puts the extension to sleep. |

@@ -5,9 +5,12 @@ Pointer has no servers, accounts, analytics, or telemetry. Nothing is sent to th
 ## What stays on your computer
 
 - The Chrome extension talks only to the Pointer hub on `127.0.0.1` (your own machine).
-- The extension stores two things in its own Chrome storage: a random id that tells your Chrome
-  profiles apart, and (until Chrome restarts) the time a profile's window was last focused. Nothing
-  else is saved.
+- The extension stores these in its own Chrome storage: a random id that tells your Chrome profiles
+  apart; your choices on the settings page (including the sites you block); and, until Chrome
+  restarts, the time a profile's window was last focused and what the bar on the agent's tab shows
+  (the agent's state, its last action and caption). Nothing else is saved.
+- Notifications are off until you turn them on. They are shown by Chrome on your computer and say
+  only the agent's name, the site's name, and how many actions it took.
 - Console and network capture keep the last few hundred entries in memory, only for tabs where an
   agent asked for them, and drop them when the tab closes or Chrome restarts.
 
