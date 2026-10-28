@@ -346,7 +346,9 @@ debugger, so Pointer hooks the page's console instead. It sees messages only fro
 fallback and asks you to close the password manager's popup.
 
 **A command was slow and you want to know where the time went.** Set `POINTER_DEBUG=1` to print the
-time of each step to stderr, or `POINTER_DEBUG=/tmp/pointer.log` to append it to a file. The file
+time of each step to stderr, or `POINTER_DEBUG=/tmp/pointer.log` to append it to a file. Lines
+starting with `ext` come from the extension and show which step inside a command was slow (finding
+the element, waiting for the page to load, and so on). The file
 form also logs the background hub, as long as the hub was started with it set (stop the old hub
 with `pkill -f "pointer.mjs serve"` first).
 
