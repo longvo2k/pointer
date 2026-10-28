@@ -27,6 +27,7 @@ import {
   notificationText,
 } from "./presence.js";
 import { SETTINGS_KEY, withDefaults } from "./settings.js";
+import { isBlockedUrl } from "./sites.js";
 
 const DEFAULT_PORT = 8790;
 const HUB_URL = `ws://127.0.0.1:${DEFAULT_PORT}/ext`;
@@ -376,7 +377,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 });
 
 // ------------------------------------------------------------------- tabs ----
-async function resolveTab(params = {}) {
+/**
+ * The tab a command acts on. Every tab command passes through here, so this is
+ * where sites the human blocked, and extension pages (the settings page), are
+ * refused. allowBlocked is only for the agent's own stop, which must always work.
+ */
+async function resolveTab(params = {}, { allowBlocked = false } = {}) {
+  const tab = await findTab(params);
+  if (!allowBlocked) {
+    assertNotExtensionPage(tab.url);
+    assertSiteAllowed(tab.url);
+  }
+  return tab;
+}
+
+async function findTab(params) {
   const id = params.tabId ?? lastTabId;
   if (id != null) {
     try {
@@ -390,6 +405,20 @@ async function resolveTab(params = {}) {
   const [any] = await chrome.tabs.query({});
   if (!any) throw new Error("No tab available. Open a page first.");
   return any;
+}
+
+const BLOCKED_MESSAGE = "This site is blocked in Pointer's settings. Ask the human to do this step.";
+
+const isBlocked = (url) => isBlockedUrl(String(url || ""), settings.blockedSites);
+
+/** Refuse a site the human listed on the settings page. */
+function assertSiteAllowed(url) {
+  if (isBlocked(url)) throw new Error(BLOCKED_MESSAGE);
+}
+
+/** Refuse extension pages, so an agent can never reach Pointer's settings. */
+function assertNotExtensionPage(url) {
+  if (String(url || "").startsWith("chrome-extension://")) throw new Error("Pointer cannot act on extension pages.");
 }
 
 /**
@@ -955,8 +984,15 @@ async function startCapture(tabId, kind) {
 // The content script (and its title badge) is replaced on navigation. Re-mark
 // tabs the agent owns once the new document is ready, and bring back a caption
 // the agent is still showing there.
-chrome.tabs.onUpdated.addListener((tabId, info) => {
+chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
   if (info.status !== "complete") return;
+  // The agent's tab landed on a blocked site (a click, a redirect): draw nothing
+  // there; every further command on it is refused by resolveTab.
+  if (isBlocked(tab?.url) && (markedTabs.has(tabId) || tabId === presence.tabId)) {
+    page(tabId, "pointer:hide", {}).catch(() => {});
+    page(tabId, "pointer:presence", viewOf(initialPresence(), settings, agentName)).catch(() => {});
+    return;
+  }
   if (markedTabs.has(tabId)) markTab(tabId);
   if (tabId === presence.tabId) pushPresence(tabId);
   const cap = captions.get(tabId);
@@ -1490,11 +1526,12 @@ async function runCommand(method, params) {
     case "tabs.list": {
       const tabs = await chrome.tabs.query({});
       return tabs
-        .filter((t) => t.url && !t.url.startsWith("chrome://"))
+        .filter((t) => t.url && !t.url.startsWith("chrome://") && !t.url.startsWith("chrome-extension://"))
         .map((t) => ({
           tabId: t.id,
-          title: t.title,
-          url: t.url,
+          // A blocked site is listed, but the agent never learns what is on it.
+          title: isBlocked(t.url) ? "(blocked site)" : t.title,
+          url: isBlocked(t.url) ? "" : t.url,
           active: t.active,
           agent: t.id === lastTabId,
           windowId: t.windowId,
@@ -1504,6 +1541,8 @@ async function runCommand(method, params) {
     case "tabs.select": {
       // Switch the agent's working tab without bringing it forward.
       const tab = await chrome.tabs.get(Number(params.tabId));
+      assertNotExtensionPage(tab.url);
+      assertSiteAllowed(tab.url);
       lastTabId = tab.id;
       await markTab(tab.id);
       return { tabId: tab.id, url: tab.url, title: tab.title };
@@ -1512,6 +1551,7 @@ async function runCommand(method, params) {
     case "tabs.open": {
       assertNotStopped();
       assertWebUrl(params.url || "about:blank");
+      assertSiteAllowed(params.url);
       // Open in the background, like Claude in Chrome: the human stays on the
       // tab and window (or profile) they are using. Only an explicit
       // focus: true brings the new tab forward.
@@ -1534,6 +1574,8 @@ async function runCommand(method, params) {
     case "tabs.focus": {
       assertNotStopped();
       const tab = await chrome.tabs.get(params.tabId ?? lastTabId);
+      assertNotExtensionPage(tab.url);
+      assertSiteAllowed(tab.url);
       lastTabId = tab.id;
       await prepareTab(tab, { bringToFront: true, focusWindow: params.focusWindow !== false });
       await markTab(tab.id);
@@ -1570,6 +1612,7 @@ async function runCommand(method, params) {
     case "page.navigate": {
       assertNotStopped();
       assertWebUrl(String(params.url || ""));
+      assertSiteAllowed(params.url);
       const tab = await resolveTab(params);
       lastTabId = tab.id;
       assertNoDialog(tab.id);
@@ -2089,7 +2132,7 @@ async function runCommand(method, params) {
     }
 
     case "page.hidePointer": {
-      const tab = await resolveTab(params);
+      const tab = await resolveTab(params, { allowBlocked: true });
       await page(tab.id, "pointer:hide", {});
       await clearCaptions();
       // The agent's own stop: it is finished (notify), then clean up at once.
