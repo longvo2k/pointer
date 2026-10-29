@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import { health } from "../lib/hub.mjs";
 import { debug, logTrace, timed, withDebug } from "../lib/debug.mjs";
 import { TOOLS, callTool } from "../lib/tools.mjs";
+import { PROMPTS, getPrompt } from "../lib/prompts.mjs";
 
 const PORT = Number(process.env.POINTER_PORT || 8790);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -74,7 +75,7 @@ async function handle(msg) {
   if (method === "initialize") {
     return reply(id, {
       protocolVersion: params?.protocolVersion || "2025-06-18",
-      capabilities: { tools: {} },
+      capabilities: { tools: {}, prompts: {} },
       serverInfo: { name: "pointer", title: "Pointer", version: "0.2.25" },
       instructions:
         "Drives the human's real Chrome tab with a visible pointer. Snapshot first, act by ref. " +
@@ -86,7 +87,14 @@ async function handle(msg) {
   if (method === "ping") return reply(id, {});
   if (method === "tools/list") return reply(id, { tools: TOOLS });
   if (method === "resources/list") return reply(id, { resources: [] });
-  if (method === "prompts/list") return reply(id, { prompts: [] });
+  if (method === "prompts/list") return reply(id, { prompts: PROMPTS });
+  if (method === "prompts/get") {
+    try {
+      return reply(id, getPrompt(params?.name, params?.arguments));
+    } catch (err) {
+      return reply(id, null, err);
+    }
+  }
 
   if (method === "tools/call") {
     const name = params?.name;
