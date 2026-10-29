@@ -1,6 +1,7 @@
 ---
 name: pointer
 description: Drive the user's real Chrome tab through the Pointer tool — click, type, scroll, read pages, and capture what is on screen with a visible pointer. Use this whenever the user asks you to do something in their browser or on a live website (fill a form, click through a flow, check a logged-in page, try a UI, grab a screenshot), says "use my browser", "drive my Chrome", "show me on screen", or names Pointer. Prefer it over headless scraping when the user needs to watch, when their existing logins matter, or when the page is behind auth. Not for chrome:// pages or purely static fetching.
+argument-hint: "[what to do in your browser]"
 ---
 
 # Pointer
@@ -19,6 +20,13 @@ can find them at a glance. `tab_open` opens tabs in the background; only `tab_fo
 That visibility is the point. The human is watching a real browser with real logins, real money, and
 real messages in it. Work at a pace they can follow, and treat irreversible actions differently
 from browsing.
+
+## When the human types `/pointer`
+
+`/pointer <task>` means the human chose Pointer for that task. Do it with Pointer, even if other
+browser tools are available, and keep using Pointer for follow-ups in the same task unless the human
+says otherwise. Start with `status` (below), then work the task as this skill describes. A bare
+`/pointer` with no task: run `status`, say whether Chrome is connected, and ask what to do.
 
 ## Running it
 

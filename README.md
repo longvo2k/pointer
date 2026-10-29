@@ -483,6 +483,19 @@ Start a new session so the skill shows up. The bundled `skills/pointer/scripts/p
 finds the checkout from its own location, so the skill works linked, copied into a project, or run
 from the repo.
 
+### Pick Pointer for a task: `/pointer`
+
+With several browser tools installed, the agent may reach for another one. Type `/pointer` and the
+task to have Pointer do it:
+
+```text
+/pointer sign up on example.com with my work email
+```
+
+In Claude Code this comes from the skill. Agents that use Pointer through MCP get the same command
+as an MCP prompt named `pointer` (Claude Code lists it as `/mcp__pointer__pointer`, VS Code as
+`/mcp.pointer.pointer`). A bare `/pointer` checks the connection and asks what to do.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Run `npm test` before sending a change.
