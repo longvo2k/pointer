@@ -87,6 +87,8 @@ export function describeCommand(method, params = {}) {
       return "scroll";
     case "page.wait":
       return "wait";
+    case "page.verify":
+      return "check the result";
     case "page.history":
       return HISTORY[params.action] || "navigate";
     default:

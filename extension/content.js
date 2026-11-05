@@ -1090,6 +1090,75 @@
     return { ok: false, error: `Timed out waiting for ${text || selector || ref}` };
   }
 
+  // ----------------------------------------------------------- verification ---
+  // One pass over the page for verify/expect: each check is "pass" or
+  // "pending" (the worker turns pending into fail at the timeout).
+
+  const squash = (s) => String(s ?? "").toLowerCase().replace(/\s+/g, " ").trim();
+
+  /** The line of visible text that holds `want`, for evidence. */
+  function lineWith(want) {
+    const needle = squash(want);
+    const line = document.body.innerText.split("\n").find((l) => squash(l).includes(needle));
+    return oneLine(line ?? want, 120);
+  }
+
+  /** Error, alert and toast text on screen, so a failed check shows what the page said instead. */
+  function pageMessages() {
+    const out = [];
+    const sel = "[role=alert],[aria-live]:not([aria-live=off]),[class*=error],[class*=invalid],[class*=toast]";
+    for (const el of document.querySelectorAll(sel)) {
+      if (out.length >= 3) break;
+      if (!isVisible(el)) continue;
+      const text = oneLine(el.innerText, 120);
+      // Nested matches (a toast inside a live region) repeat the same text.
+      if (!text || out.some((s) => s.includes(text) || text.includes(s))) continue;
+      out.push(text);
+    }
+    return out;
+  }
+
+  function checkSelector(selector) {
+    const base = { name: "selector", want: selector };
+    let els;
+    try {
+      els = [...document.querySelectorAll(selector)];
+    } catch {
+      return { ...base, state: "fail", reason: "not a valid CSS selector" };
+    }
+    const shown = els.filter(isVisible).length;
+    if (shown) return { ...base, state: "pass", reason: `${shown} visible` };
+    return { ...base, state: "pending", reason: els.length ? `${els.length} found, none visible` : "no match" };
+  }
+
+  function checkField(field, equals) {
+    const el = /^e\d+$/.test(field) ? findByRef(field) : find(field);
+    const secret = el && isSensitive(el);
+    const base = { name: "field", want: `${field} = "${secret ? "••••" : oneLine(equals, 60)}"` };
+    if (!el) return { ...base, state: "pending", reason: "no such field (refs reset on navigation)" };
+    const value = el.isContentEditable ? el.textContent ?? "" : String(el.value ?? "");
+    const shown = secret ? "••••" : oneLine(value, 120);
+    if (value === String(equals)) return { ...base, state: "pass", evidence: shown };
+    return { ...base, state: "pending", reason: `value is "${shown}"` };
+  }
+
+  function checkPage(p) {
+    const text = squash(document.body.innerText);
+    const checks = [];
+    if (p.text != null) {
+      const ok = text.includes(squash(p.text));
+      checks.push({ name: "text", want: p.text, state: ok ? "pass" : "pending", ...(ok ? { evidence: lineWith(p.text) } : { reason: "not on the page" }) });
+    }
+    if (p.gone != null) {
+      const ok = !text.includes(squash(p.gone));
+      checks.push({ name: "gone", want: p.gone, state: ok ? "pass" : "pending", reason: ok ? "not on the page" : `still on the page: '${lineWith(p.gone)}'` });
+    }
+    if (p.selector != null) checks.push(checkSelector(p.selector));
+    if (p.field != null) checks.push(checkField(p.field, p.equals));
+    const failing = checks.some((c) => c.state !== "pass");
+    return { ok: true, checks, messages: failing ? pageMessages() : [] };
+  }
+
   // ----------------------------------------------------------------- layout ---
   // Measure the page for layout bugs a screenshot hides: overflow, clipped
   // text, overlaps, small tap targets, tight padding, uneven gaps. Fixed code,
@@ -1551,6 +1620,8 @@
           }
           case "pointer:wait":
             return sendResponse(await waitFor(msg.params || {}));
+          case "pointer:check":
+            return sendResponse(checkPage(msg.params || {}));
           // Page-event fallbacks, used when Chrome blocks debugger input on
           // this page. These events are untrusted, so some sites ignore them.
           case "pointer:domclick": {

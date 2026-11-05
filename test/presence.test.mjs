@@ -48,6 +48,7 @@ test("describeCommand names what the agent does", () => {
   }
   assert.equal(describeCommand("page.navigate", { url: "https://www.example.com/a" }), "open example.com");
   assert.equal(describeCommand("tabs.open", { url: "https://example.com" }), "open example.com");
+  assert.equal(describeCommand("page.verify", { text: "Saved" }), "check the result");
   assert.equal(describeCommand("page.snapshot", {}), "read the page");
   assert.equal(describeCommand("page.text", {}), "read the page");
   assert.equal(describeCommand("page.screenshot", {}), "take a screenshot");

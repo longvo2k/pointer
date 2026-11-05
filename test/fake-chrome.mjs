@@ -9,9 +9,9 @@ let loads = 0;
  * `session` carries chrome.storage.session across loads, like a worker that
  * Chrome evicted and woke again. `settingsDelayMs` makes reading settings slow.
  */
-export async function loadWorker({ tabs = [], groups = [], settings = {}, session = {}, settingsDelayMs = 0 } = {}) {
-  const log = { notifications: [], pageMessages: [], groupTitles: [], ungrouped: [] };
-  const listeners = { runtime: [], storage: [], alarm: [], updated: [] };
+export async function loadWorker({ tabs = [], groups = [], settings = {}, session = {}, settingsDelayMs = 0, onPage, onCdp } = {}) {
+  const log = { notifications: [], pageMessages: [], groupTitles: [], ungrouped: [], cdp: [] };
+  const listeners = { runtime: [], storage: [], alarm: [], updated: [], debuggerEvent: [] };
   const tabMap = new Map(tabs.map((t) => [t.id, { windowId: 1, active: false, status: "complete", groupId: -1, title: "Page", ...t }]));
   const groupMap = new Map(groups.map((g) => [g.id, { windowId: 1, collapsed: false, color: "purple", ...g }]));
   const local = { pointerSettings: settings };
@@ -123,6 +123,9 @@ export async function loadWorker({ tabs = [], groups = [], settings = {}, sessio
       },
       sendMessage: async (_id, m) => {
         log.pageMessages.push({ tabId: _id, type: m.type, params: m.params });
+        // A test can answer page messages itself; undefined falls through to the defaults.
+        const scripted = onPage && (await onPage(m.type, m.params));
+        if (scripted !== undefined) return scripted;
         if (m.type === "pointer:snapshot") return { ok: true, text: `- link "Secret account page" [ref=e1]` };
         return { ok: true, title: "Page" };
       },
@@ -146,7 +149,16 @@ export async function loadWorker({ tabs = [], groups = [], settings = {}, sessio
       },
     },
     scripting: { executeScript: async () => [] },
-    debugger: { onDetach: ev(), onEvent: ev(), attach: async () => {}, sendCommand: async () => ({}), detach: async () => {} },
+    debugger: {
+      onDetach: ev(),
+      onEvent: ev(listeners.debuggerEvent),
+      attach: async () => {},
+      sendCommand: async ({ tabId }, method, params) => {
+        log.cdp.push(method);
+        return (onCdp && (await onCdp(method, params, tabId))) || {};
+      },
+      detach: async () => {},
+    },
     permissions: { contains: async () => true, onAdded: ev() },
     notifications: {
       create: async (id, o) => void log.notifications.push(`${id}: ${o.title} | ${o.message}`),
@@ -185,6 +197,10 @@ export async function loadWorker({ tabs = [], groups = [], settings = {}, sessio
     async hubEvent(msg) {
       await socket.l.message({ data: JSON.stringify(msg) });
       await tick(5);
+    },
+    /** A Chrome DevTools Protocol event from a tab, e.g. Network.responseReceived. */
+    cdpEvent(tabId, method, params) {
+      for (const f of listeners.debuggerEvent) f({ tabId }, method, params);
     },
     async alarm() {
       for (const f of listeners.alarm) f({ name: "pointer-keepalive" });

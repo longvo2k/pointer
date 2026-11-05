@@ -96,6 +96,15 @@ test("a failing result shows what happened instead", () => {
   );
 });
 
+test("a failed URL check shows the URL without secrets", () => {
+  const out = formatVerification({
+    state: "fail",
+    elapsedMs: 0,
+    checks: [{ name: "url", want: "/done", state: "fail", evidence: "https://example.com/login?token=abc#x" }],
+  });
+  assert.match(out, /✗ url "\/done" — the URL is example.com\/login\?token=…$/);
+});
+
 test("a dialog stops the checks and says so", () => {
   const out = formatVerification({ state: "fail", elapsedMs: 100, checks: [], dialog: { type: "confirm", message: "Discard?" } });
   assert.match(out, /^NOT verified: a confirm dialog is waiting \("Discard\?"\)/);

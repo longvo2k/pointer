@@ -28,6 +28,7 @@ import {
 } from "./presence.js";
 import { SETTINGS_KEY, withDefaults } from "./settings.js";
 import { isBlockedUrl } from "./sites.js";
+import { parseRequestSpec, matchRequest, combine } from "./verify.js";
 
 const DEFAULT_PORT = 8790;
 const HUB_URL = `ws://127.0.0.1:${DEFAULT_PORT}/ext`;
@@ -804,6 +805,105 @@ function assertNoDialog(tabId) {
   }
 }
 
+// ----------------------------------------------------------- verification ---
+// After an action the agent can ask for proof of its outcome: text shown or
+// gone, a field's value, the URL, a request and its status. Requests only
+// count from the start of the last action, so earlier traffic cannot pass.
+const lastActions = new Map(); // tabId -> { at, network, blocked }
+const CAPTURE_OFF =
+  "network capture was off when the last action ran; pass expect: { request } on the action, or call network first";
+const CAPTURE_BLOCKED =
+  "Chrome blocks network capture on this page because another extension (often a password manager) put a frame on it";
+
+/** Note the start of an action; start network capture first when its expect checks a request. */
+async function beginAction(tabId, expect) {
+  let blocked = false;
+  if (expect?.request) {
+    try {
+      await startCapture(tabId, "network");
+    } catch (err) {
+      if (!debuggerBlocked(err)) throw err;
+      blocked = true;
+    }
+  }
+  const mark = { at: Date.now(), network: Boolean(captures.get(tabId)?.network), blocked };
+  lastActions.set(tabId, mark);
+  return mark;
+}
+
+function requestCheck(tabId, checks, spec, mark) {
+  const base = { name: "request", want: checks.request };
+  const c = captures.get(tabId);
+  if (mark?.blocked) return { ...base, state: "fail", reason: CAPTURE_BLOCKED };
+  if (!c?.network || (mark && !mark.network)) return { ...base, state: "fail", reason: CAPTURE_OFF };
+  const entries = c.order.map((id) => c.net.get(id)).filter(Boolean);
+  const m = matchRequest(entries, spec, { since: mark?.at ?? 0, status: checks.status });
+  const out = { ...base, state: m.state };
+  if (m.entry) {
+    const e = m.entry;
+    out.entry = { id: e.id, method: e.method, url: e.url, status: e.status, ms: e.ms, failed: e.failed };
+  }
+  if (m.reason) out.reason = m.reason;
+  return out;
+}
+
+const PAGE_CHECK_KEYS = ["text", "gone", "selector", "field", "equals"];
+
+/** Check until every check passes, one fails for good, or the timeout runs out. */
+async function runChecks(tab, checks, mark) {
+  const started = Date.now();
+  const deadline = started + clampMs(checks.timeout, 5000, 30000);
+  const pageChecks = {};
+  for (const k of PAGE_CHECK_KEYS) if (checks[k] != null) pageChecks[k] = checks[k];
+  const pageNames = ["text", "gone", "selector", "field"].filter((k) => checks[k] != null);
+  const spec = checks.request ? parseRequestSpec(checks.request) : null;
+  let results = [];
+  let messages = [];
+  for (;;) {
+    const dialog = dialogs.get(tab.id);
+    if (dialog) return { state: "fail", dialog, checks: [], elapsedMs: Date.now() - started };
+    results = [];
+    if (pageNames.length) {
+      try {
+        const res = await page(tab.id, "pointer:check", pageChecks);
+        results.push(...res.checks);
+        messages = res.messages || [];
+      } catch {
+        // The page is loading (or busy): not yet, try again next round.
+        for (const name of pageNames) results.push({ name, want: name === "field" ? checks.field : checks[name], state: "pending", reason: "the page did not answer (it may be loading)" });
+      }
+    }
+    if (checks.url != null) {
+      const now = (await chrome.tabs.get(tab.id)).url || "";
+      results.push({ name: "url", want: checks.url, state: now.includes(checks.url) ? "pass" : "pending", evidence: now });
+    }
+    if (spec) results.push(requestCheck(tab.id, checks, spec, mark));
+    if (combine(results) !== "pending" || Date.now() >= deadline) break;
+    await sleep(150);
+  }
+  for (const r of results) if (r.state === "pending") r.state = "fail";
+  for (const r of results) {
+    if (r.name !== "request" || r.state !== "fail" || !r.entry?.status || r.entry.failed) continue;
+    try {
+      const body = await cdp(tab.id, "Network.getResponseBody", { requestId: r.entry.id });
+      if (!body.base64Encoded && body.body) r.entry.body = String(body.body).slice(0, 200);
+    } catch {}
+  }
+  const state = combine(results);
+  const out = { state, checks: results, elapsedMs: Date.now() - started, url: (await chrome.tabs.get(tab.id)).url };
+  if (state !== "pass" && messages.length) out.messages = messages;
+  if (checks.screenshot) {
+    await page(tab.id, "pointer:overlay-visible", { on: false }).catch(() => {});
+    try {
+      await sleep(120);
+      out.dataUrl = (await captureTab(tab, {})).dataUrl;
+    } finally {
+      await page(tab.id, "pointer:overlay-visible", { on: true }).catch(() => {});
+    }
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------- capture ---
 // Console and network capture are opt-in per tab: enabling Runtime/Network
 // makes the debugger easier for anti-bot scripts to notice, so the tab keeps
@@ -917,6 +1017,7 @@ chrome.debugger.onEvent.addListener((source, method, p) => {
         url: p.request.url,
         type: p.type || "Other",
         start: p.timestamp,
+        at: Date.now(),
       });
       while (c.order.length > NET_LIMIT) c.net.delete(c.order.shift());
       return;
@@ -1760,6 +1861,7 @@ async function runCommand(method, params) {
       await prepareTab(tab);
       await markTab(tab.id);
       trace("act active");
+      const mark = (params.kind || "click") === "click" ? await beginAction(tab.id, params.expect) : null;
 
       return await withBackgroundInput(tab, async () => {
         const spot = await page(tab.id, "pointer:locate", params);
@@ -1820,7 +1922,7 @@ async function runCommand(method, params) {
         const changes = await collectChanges(tab.id, docId, { loaded: navigated });
         const after = await chrome.tabs.get(tab.id);
         trace("act done");
-        return {
+        const res = {
           ok: true,
           target: { role: spot.role, name: spot.name },
           url: after.url,
@@ -1830,6 +1932,8 @@ async function runCommand(method, params) {
           synthetic,
           opened: await spawnedTabs(tab.id),
         };
+        if (mark && params.expect) res.verification = await runChecks(tab, params.expect, mark);
+        return res;
       });
     }
 
@@ -1840,6 +1944,7 @@ async function runCommand(method, params) {
       assertNoDialog(tab.id);
       await prepareTab(tab);
       await markTab(tab.id);
+      const mark = await beginAction(tab.id, params.expect);
       return await withBackgroundInput(tab, async () => {
         const spot = await page(tab.id, "pointer:locate", params);
         const label = spot.name || params.ref || "field";
@@ -1919,7 +2024,9 @@ async function runCommand(method, params) {
         }
         const navigated = await settle(tab.id, nav, params.submit ? 240 : 120, params.submit ? 800 : 150);
         const changes = await collectChanges(tab.id, docId, { loaded: navigated });
-        return { ok: true, target: label, url: (await chrome.tabs.get(tab.id)).url, changes, synthetic, opened: await spawnedTabs(tab.id) };
+        const res = { ok: true, target: label, url: (await chrome.tabs.get(tab.id)).url, changes, synthetic, opened: await spawnedTabs(tab.id) };
+        if (params.expect) res.verification = await runChecks(tab, params.expect, mark);
+        return res;
       });
     }
 
@@ -1930,6 +2037,7 @@ async function runCommand(method, params) {
       assertNoDialog(tab.id);
       await prepareTab(tab);
       await markTab(tab.id);
+      const mark = await beginAction(tab.id, params.expect);
       return await withBackgroundInput(tab, async () => {
         await page(tab.id, "pointer:agent-window", { ms: 2000 });
         const docId = await takeBaseline(tab.id);
@@ -1954,7 +2062,9 @@ async function runCommand(method, params) {
         }
         const navigated = await settle(tab.id, nav, 240, key === "Enter" ? 800 : 150);
         const changes = await collectChanges(tab.id, docId, { loaded: navigated });
-        return { ok: true, key, url: (await chrome.tabs.get(tab.id)).url, navigated, changes, synthetic, opened: await spawnedTabs(tab.id) };
+        const res = { ok: true, key, url: (await chrome.tabs.get(tab.id)).url, navigated, changes, synthetic, opened: await spawnedTabs(tab.id) };
+        if (params.expect) res.verification = await runChecks(tab, params.expect, mark);
+        return res;
       });
     }
 
@@ -2090,6 +2200,13 @@ async function runCommand(method, params) {
         }
       }
       return { started, reloaded: Boolean(params.reload), url: (await chrome.tabs.get(tab.id)).url, entries: out };
+    }
+
+    case "page.verify": {
+      const tab = await resolveTab(params);
+      lastTabId = tab.id;
+      await markTab(tab.id);
+      return await runChecks(tab, params, lastActions.get(tab.id));
     }
 
     case "page.wait": {
