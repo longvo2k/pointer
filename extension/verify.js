@@ -9,19 +9,42 @@ export function parseRequestSpec(text) {
   return { method: null, path: raw };
 }
 
+const SECRET_PARAM =
+  /(^|[_.-])(access_?token|id_?token|refresh_?token|token|secret|code|api_?key|key|auth|session(_?id)?|sid|sig(nature)?|password|passwd|pass|otp|jwt|ticket|credentials?)$/i;
+
+/**
+ * The URL as the agent is shown it: secret-looking query values and the
+ * #fragment removed (same rule as lib/tools.mjs safeUrl). Checks match this,
+ * so an agent cannot guess a hidden token one character at a time.
+ */
+export function visibleUrl(href) {
+  try {
+    const u = new URL(href);
+    u.hash = "";
+    for (const k of [...u.searchParams.keys()]) if (SECRET_PARAM.test(k)) u.searchParams.set(k, "redacted");
+    return u.href.replace(/=redacted/g, "=…");
+  } catch {
+    return String(href ?? "").split("#")[0];
+  }
+}
+
 /**
  * Find the request that proves (or disproves) the check. Only requests sent at
  * or after `since` count, so traffic from before the action cannot pass it.
- * The most recent match decides.
+ * The most recent finished match decides; one still in flight only counts
+ * when nothing has answered yet.
  */
 export function matchRequest(entries, spec, { since = 0, status } = {}) {
   const matches = (entries || []).filter(
-    (e) => e.at >= since && (!spec.method || String(e.method).toUpperCase() === spec.method) && String(e.url).includes(spec.path)
+    (e) => e.at >= since && (!spec.method || String(e.method).toUpperCase() === spec.method) && visibleUrl(e.url).includes(spec.path)
   );
-  const entry = matches[matches.length - 1];
-  if (!entry) return { state: "pending", reason: "no matching request" };
+  const finished = matches.filter((e) => e.failed || e.status != null);
+  const entry = finished[finished.length - 1];
+  if (!entry) {
+    const waiting = matches[matches.length - 1];
+    return waiting ? { state: "pending", entry: waiting, reason: "no response yet" } : { state: "pending", reason: "no matching request" };
+  }
   if (entry.failed) return { state: "fail", entry };
-  if (entry.status == null) return { state: "pending", entry, reason: "no response yet" };
   const ok = status != null ? entry.status === status : entry.status >= 200 && entry.status < 300;
   return { state: ok ? "pass" : "fail", entry };
 }

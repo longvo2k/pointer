@@ -1,7 +1,7 @@
 // Verification: which captured request proves an action reached the server.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseRequestSpec, matchRequest, combine } from "../extension/verify.js";
+import { parseRequestSpec, matchRequest, combine, visibleUrl } from "../extension/verify.js";
 
 const POST = { method: "POST", path: "/api/items" };
 const entry = (o) => ({ id: "1", method: "POST", url: "https://a.com/api/items", at: 100, ...o });
@@ -57,4 +57,19 @@ test("results combine: any fail fails, any pending waits, else pass", () => {
   assert.equal(combine([{ state: "pass" }, { state: "pending" }]), "pending");
   assert.equal(combine([{ state: "pending" }, { state: "fail" }]), "fail");
   assert.equal(combine([{ state: "pass" }, { state: "pass" }]), "pass");
+});
+
+test("a newer request still in flight does not hide an earlier answer", () => {
+  const list = [entry({ id: "1", status: 201, at: 10 }), entry({ id: "2", at: 20 })];
+  const r = matchRequest(list, POST, { since: 0 });
+  assert.equal(r.state, "pass");
+  assert.equal(r.entry.id, "1");
+  assert.equal(matchRequest([entry({ at: 20 })], POST, { since: 0 }).reason, "no response yet");
+});
+
+test("checks match the URL the agent is shown, so hidden secrets cannot be guessed", () => {
+  assert.equal(visibleUrl("https://a.com/cb?code=s3cret&state=ok#access_token=t0k"), "https://a.com/cb?code=…&state=ok");
+  const list = [entry({ url: "https://a.com/api/items?token=abc", status: 200 })];
+  assert.equal(matchRequest(list, { method: null, path: "token=a" }, { since: 0 }).state, "pending");
+  assert.equal(matchRequest(list, { method: null, path: "/api/items?token=" }, { since: 0 }).state, "pass");
 });

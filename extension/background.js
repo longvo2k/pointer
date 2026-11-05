@@ -28,7 +28,7 @@ import {
 } from "./presence.js";
 import { SETTINGS_KEY, withDefaults } from "./settings.js";
 import { isBlockedUrl } from "./sites.js";
-import { parseRequestSpec, matchRequest, combine } from "./verify.js";
+import { parseRequestSpec, matchRequest, combine, visibleUrl } from "./verify.js";
 
 const DEFAULT_PORT = 8790;
 const HUB_URL = `ws://127.0.0.1:${DEFAULT_PORT}/ext`;
@@ -815,7 +815,7 @@ const CAPTURE_OFF =
 const CAPTURE_BLOCKED =
   "Chrome blocks network capture on this page because another extension (often a password manager) put a frame on it";
 
-/** Note the start of an action; start network capture first when its expect checks a request. */
+/** Get ready for an action: start network capture first when its expect checks a request. */
 async function beginAction(tabId, expect) {
   let blocked = false;
   if (expect?.request) {
@@ -826,9 +826,14 @@ async function beginAction(tabId, expect) {
       blocked = true;
     }
   }
-  const mark = { at: Date.now(), network: Boolean(captures.get(tabId)?.network), blocked };
+  return { at: null, network: Boolean(captures.get(tabId)?.network), blocked };
+}
+
+/** The input is about to go out: from now on, requests count as this action's. */
+function stampAction(tabId, mark) {
+  if (!mark) return;
+  mark.at = Date.now();
   lastActions.set(tabId, mark);
-  return mark;
 }
 
 function requestCheck(tabId, checks, spec, mark) {
@@ -865,7 +870,9 @@ async function runChecks(tab, checks, mark) {
     results = [];
     if (pageNames.length) {
       try {
-        const res = await page(tab.id, "pointer:check", pageChecks);
+        // Never wait on a stuck page past the deadline (page() alone allows 12s).
+        const left = Math.max(deadline - Date.now(), 0) + 300;
+        const res = await withTimeout(page(tab.id, "pointer:check", pageChecks), left, "the page did not answer");
         results.push(...res.checks);
         messages = res.messages || [];
       } catch {
@@ -875,7 +882,7 @@ async function runChecks(tab, checks, mark) {
     }
     if (checks.url != null) {
       const now = (await chrome.tabs.get(tab.id)).url || "";
-      results.push({ name: "url", want: checks.url, state: now.includes(checks.url) ? "pass" : "pending", evidence: now });
+      results.push({ name: "url", want: checks.url, state: visibleUrl(now).includes(checks.url) ? "pass" : "pending", evidence: now });
     }
     if (spec) results.push(requestCheck(tab.id, checks, spec, mark));
     if (combine(results) !== "pending" || Date.now() >= deadline) break;
@@ -885,7 +892,7 @@ async function runChecks(tab, checks, mark) {
   for (const r of results) {
     if (r.name !== "request" || r.state !== "fail" || !r.entry?.status || r.entry.failed) continue;
     try {
-      const body = await cdp(tab.id, "Network.getResponseBody", { requestId: r.entry.id });
+      const body = await withTimeout(cdp(tab.id, "Network.getResponseBody", { requestId: r.entry.id }), 3000, "body timed out");
       if (!body.base64Encoded && body.body) r.entry.body = String(body.body).slice(0, 200);
     } catch {}
   }
@@ -1010,6 +1017,15 @@ chrome.debugger.onEvent.addListener((source, method, p) => {
       if (!c?.network) return;
       // Other extensions' own files are not the page's traffic.
       if (p.request.url.startsWith("chrome-extension://")) return;
+      // A redirect reuses the requestId: keep the hop that redirected (e.g.
+      // POST /session -> 302) as its own entry before recording the next one.
+      const prev = c.net.get(p.requestId);
+      if (prev && p.redirectResponse) {
+        const hopId = `${p.requestId}.${p.redirectResponse.status}.${c.order.length}`;
+        c.order[c.order.indexOf(p.requestId)] = hopId;
+        c.net.delete(p.requestId);
+        c.net.set(hopId, { ...prev, id: hopId, status: p.redirectResponse.status, ms: Math.round((p.timestamp - prev.start) * 1000) });
+      }
       if (!c.net.has(p.requestId)) c.order.push(p.requestId);
       c.net.set(p.requestId, {
         id: p.requestId,
@@ -1017,7 +1033,8 @@ chrome.debugger.onEvent.addListener((source, method, p) => {
         url: p.request.url,
         type: p.type || "Other",
         start: p.timestamp,
-        at: Date.now(),
+        // When the page sent it (wall clock), so a late event cannot pass for one the action caused.
+        at: p.wallTime ? p.wallTime * 1000 : Date.now(),
       });
       while (c.order.length > NET_LIMIT) c.net.delete(c.order.shift());
       return;
@@ -1888,6 +1905,7 @@ async function runCommand(method, params) {
         const markAgentInput = () =>
           page(tab.id, "pointer:agent-window", { ms: 2000 }).catch(() => {});
         let synthetic = false;
+        stampAction(tab.id, mark);
         const nav = watchNavigation(tab.id, 10000);
         try {
           if (action === "click") {
@@ -1985,6 +2003,7 @@ async function runCommand(method, params) {
         };
         const submit = () =>
           synthetic || pickerInput ? page(tab.id, "pointer:dompress", { key: "Enter" }) : pressKey(tab.id, "Enter");
+        stampAction(tab.id, mark);
         const nav = watchNavigation(tab.id, 10000);
         const typing = (async () => {
           if (synthetic || pickerInput) {
@@ -2044,6 +2063,7 @@ async function runCommand(method, params) {
         const key = params.key || "Enter";
         // Enter often submits a form: notice the page load so the report
         // describes the new page, not the one being left.
+        stampAction(tab.id, mark);
         const nav = watchNavigation(tab.id, 10000);
         let synthetic = false;
         try {

@@ -345,3 +345,13 @@ test("ext.use refuses an ambiguous prefix and a browser that never said hello", 
   for (const ws of [A.ws, B.ws, silent]) ws.close();
   await wait(100);
 });
+
+test("verification calls get the checks' timeout on top of the usual wait", async () => {
+  const { rpcTimeout } = await import("../lib/hub.mjs");
+  assert.equal(rpcTimeout("page.snapshot", {}), 30000);
+  assert.equal(rpcTimeout("page.act", { ref: "e1" }), 30000);
+  assert.equal(rpcTimeout("page.verify", { text: "x", timeout: 30000 }), 60000);
+  assert.equal(rpcTimeout("page.verify", { text: "x" }), 35000);
+  assert.equal(rpcTimeout("page.act", { ref: "e1", expect: { text: "x", timeout: 20000 } }), 50000);
+  assert.equal(rpcTimeout("page.press", { key: "Enter", expect: { text: "x", timeout: 999999 } }), 60000);
+});

@@ -172,3 +172,77 @@ test("a click that opens a dialog returns the dialog, with no checks run", async
   assert.equal(r.result.dialog.message, "Delete?");
   assert.equal("verification" in r.result, false);
 });
+
+test("a page that stops answering does not hold the check past its timeout", async () => {
+  const w = await worker({ onPage: (type) => (type === "pointer:check" ? new Promise(() => {}) : undefined) });
+  const started = Date.now();
+  const r = await w.command("page.verify", { text: "Item saved", timeout: 300 });
+  assert.equal(r.result.state, "fail");
+  assert.equal(r.result.checks[0].reason, "the page did not answer (it may be loading)");
+  assert.ok(Date.now() - started < 2000, `took ${Date.now() - started}ms`);
+});
+
+test("a POST that redirects keeps its own entry and status", async () => {
+  let w;
+  w = await worker({
+    onCdp: (method, params, tabId) => {
+      if (method === "Input.dispatchMouseEvent" && params.type === "mouseReleased") {
+        const now = Date.now() / 1000;
+        w.cdpEvent(tabId, "Network.requestWillBeSent", { requestId: "r9", request: { method: "POST", url: "https://www.example.com/session" }, type: "Document", timestamp: 1, wallTime: now });
+        w.cdpEvent(tabId, "Network.requestWillBeSent", {
+          requestId: "r9",
+          request: { method: "GET", url: "https://www.example.com/dashboard" },
+          redirectResponse: { status: 302 },
+          type: "Document",
+          timestamp: 1.05,
+          wallTime: now,
+        });
+        w.cdpEvent(tabId, "Network.responseReceived", { requestId: "r9", response: { status: 200 }, type: "Document" });
+      }
+    },
+  });
+  const r = await w.command("page.act", { ref: "e1", kind: "click", expect: { request: "POST /session", status: 302, timeout: 500 } });
+  assert.equal(r.result.verification.state, "pass");
+  assert.equal(r.result.verification.checks[0].entry.status, 302);
+  const next = await w.command("page.verify", { request: "GET /dashboard", timeout: 0 });
+  assert.equal(next.result.state, "pass");
+});
+
+test("requests sent while the pointer glides, before the input, do not count", async () => {
+  let w;
+  w = await worker({
+    onPage: async (type) => {
+      if (type === "pointer:act") {
+        w.cdpEvent(5, "Network.requestWillBeSent", { requestId: "bg", request: { method: "POST", url: "https://www.example.com/graphql" }, type: "Fetch", timestamp: 1, wallTime: Date.now() / 1000 });
+        w.cdpEvent(5, "Network.responseReceived", { requestId: "bg", response: { status: 200 }, type: "Fetch" });
+        await new Promise((r) => setTimeout(r, 30)); // the glide takes time; the click comes after it
+      }
+      return undefined;
+    },
+  });
+  const r = await w.command("page.act", { ref: "e1", kind: "click", expect: { request: "POST /graphql", timeout: 300 } });
+  assert.equal(r.result.verification.state, "fail");
+  assert.equal(r.result.verification.checks[0].reason, "no matching request");
+});
+
+test("a request the page sent before the input counts by its send time, not its arrival", async () => {
+  let w;
+  w = await worker({
+    onCdp: (method, params, tabId) => {
+      if (method === "Input.dispatchMouseEvent" && params.type === "mouseReleased") {
+        w.cdpEvent(tabId, "Network.requestWillBeSent", { requestId: "late", request: { method: "POST", url: "https://www.example.com/api/items" }, type: "Fetch", timestamp: 1, wallTime: (Date.now() - 5000) / 1000 });
+        w.cdpEvent(tabId, "Network.responseReceived", { requestId: "late", response: { status: 201 }, type: "Fetch" });
+      }
+    },
+  });
+  const r = await w.command("page.act", { ref: "e1", kind: "click", expect: { request: "POST /api/items", timeout: 300 } });
+  assert.equal(r.result.verification.state, "fail");
+});
+
+test("the URL check cannot see secrets in the URL", async () => {
+  const w = await loadWorker({ tabs: [{ ...PAGE, url: "https://www.example.com/cb?code=s3cret#access_token=t0k" }] });
+  await w.command("tabs.select", { tabId: 5 });
+  assert.equal((await w.command("page.verify", { url: "code=s", timeout: 0 })).result.state, "fail");
+  assert.equal((await w.command("page.verify", { url: "access_token", timeout: 0 })).result.state, "fail");
+  assert.equal((await w.command("page.verify", { url: "/cb?code=", timeout: 0 })).result.state, "pass");
+});
