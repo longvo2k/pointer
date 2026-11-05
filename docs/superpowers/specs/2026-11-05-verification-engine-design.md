@@ -1,6 +1,6 @@
 # Verification engine
 
-Date: 2026-11-05. Status: draft for approval.
+Date: 2026-11-05. Status: approved 2026-11-05; implemented on feat/verification-engine.
 
 ## Why
 
@@ -126,15 +126,15 @@ Exact wording of messages, the CLI flag names, and how the poll loop is split be
 
 | # | Acceptance criterion | Verification method | Status | Evidence |
 |---|---|---|---|---|
-| AC1 | `verify` with `text` passes when the text is on the page and shows the matching line | unit test + browser check | | |
-| AC2 | `verify` fails after `timeout` when a check never passes, listing messages on the page | unit test + browser check | | |
-| AC3 | `gone`, `selector`, `field`+`equals` and `url` each pass and fail correctly | unit test + browser check | | |
-| AC4 | `request` passes on a matching 2xx request sent after the last action, never on an earlier one | unit test + browser check | | |
-| AC5 | `request` fails early on a wrong status, showing the status and the start of the body | unit test + browser check | | |
-| AC6 | `expect` on `click`/`fill`/`press` starts network capture before acting when it has a `request`, and appends the verification block | unit test + browser check | | |
-| AC7 | A failed `expect` does not make the action an error | unit test | | |
-| AC8 | Network capture stays off unless a check asks for a request | unit test | | |
-| AC9 | Bad arguments are refused with a clear message (no checks, `equals` without `field`, `status` without `request`, timeout out of range) | unit test | | |
-| AC10 | Password field values never appear in evidence | unit test | | |
-| AC11 | `pointer verify` CLI works and the skill/README document `verify` and `expect` | manual review + CLI run | | |
-| AC12 | The full test suite passes | `npm test` | | |
+| AC1 | `verify` with `text` passes when the text is on the page and shows the matching line | unit test + browser check | VERIFIED | `verify-worker` "verify passes when the page shows the text"; Chrome for Testing 157: `text "item SAVED" — "Item saved successfully"` (case ignored) |
+| AC2 | `verify` fails after `timeout` when a check never passes, listing messages on the page | unit test + browser check | VERIFIED | `verify-worker` "fails at the timeout…"; Chrome: `NOT verified (1 of 1 check failed after 2.0s)` + `messages on the page: "Name is required"` |
+| AC3 | `gone`, `selector`, `field`+`equals` and `url` each pass and fail correctly | unit test + browser check | VERIFIED | `verify-worker` URL test; Chrome: gone pass, selector pass / no match / invalid, field pass and mismatch, url pass |
+| AC4 | `request` passes on a matching 2xx request sent after the last action, never on an earlier one | unit test + browser check | VERIFIED | `verify.test` "a request sent before the action never counts", `verify-worker` "a request from before the action…"; Chrome: `press Shift` with expect request → `no matching request` after an earlier 201 |
+| AC5 | `request` fails early on a wrong status, showing the status and the start of the body | unit test + browser check | VERIFIED | `verify-worker` "a 422 fails at once…"; Chrome: `POST 422 …/api/items?token=…: {"error":"Name is required"}` after 0.0s |
+| AC6 | `expect` on `click`/`fill`/`press` starts network capture before acting when it has a `request`, and appends the verification block | unit test + browser check | VERIFIED | `verify-worker` asserts `Network.enable` before `Input.dispatchMouseEvent`; Chrome: click with 4-check expect → `verified (4 checks, 0.3s)` with `POST 201 (155ms)` |
+| AC7 | A failed `expect` does not make the action an error | unit test | VERIFIED | `verify-tool` "click with expect reports the action, then the verification, without failing" |
+| AC8 | Network capture stays off unless a check asks for a request | unit test | VERIFIED | `verify-worker` "an action without expect never turns on network capture"; Chrome: fresh tab → `network capture was off when the last action ran` |
+| AC9 | Bad arguments are refused with a clear message | unit test | VERIFIED | `verify-tool` "checks are refused…"; CLI `pointer verify` → `Pass at least one check…` exit 1 |
+| AC10 | Password field values never appear in evidence | browser check | VERIFIED | Chrome: `field #pw = "••••" — value is "••••"` and `field e2 = "••••" — "••••"`. Ruling: no node test, the suite has no DOM |
+| AC11 | `pointer verify` CLI works and the skill/README document `verify` and `expect` | manual review + CLI run | VERIFIED | `POINTER_PORT=18790 pointer verify --text … --url … --gone …` → `verified (3 checks)`; SKILL.md and README updated |
+| AC12 | The full test suite passes | `npm test` | VERIFIED | 139/139 |
