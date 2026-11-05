@@ -64,3 +64,12 @@ test("a stop right after the worker wakes uses the human's settings", async () =
   assert.equal(w.log.notifications.length, 1);
   assert.match(w.log.notifications[0], /^pointer-stopped/);
 });
+
+test("the popup learns when the hub is pinned to another profile, and can take it", async () => {
+  const w = await loadWorker({ tabs: [PAGE] });
+  assert.equal((await w.message({ type: "pointer:status" })).hub, null, "nothing known before the hub says");
+  await w.hubEvent({ event: "hub", active: false, pinned: true, browsers: 3 });
+  assert.deepEqual((await w.message({ type: "pointer:status" })).hub, { active: false, pinned: true, browsers: 3 });
+  assert.deepEqual(await w.message({ type: "pointer:use-here" }), { ok: true });
+  assert.deepEqual(w.events().at(-1), { event: "use" });
+});

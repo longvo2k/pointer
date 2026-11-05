@@ -239,7 +239,8 @@ show up too, so the agent sees "Saved" or "Pick a plan to continue" without anot
 
 | Job | Tools |
 |---|---|
-| Tabs | `browser_status`, `tabs_list`, `tab_open`, `tab_select`, `tab_close`, `tab_focus` |
+| Browsers | `browser_status`, `browsers_list`, `browser_use` |
+| Tabs | `tabs_list`, `tab_open`, `tab_select`, `tab_close`, `tab_focus` |
 | Read | `snapshot`, `find`, `read_text`, `screenshot`, `wait_for` |
 | Screen size and layout | `viewport`, `layout` |
 | Act | `click`, `hover`, `fill`, `press`, `scroll`, `navigate`, `upload`, `dialog` |
@@ -324,6 +325,15 @@ pointer browsers         # each profile: build, last focus, which one is active
 pointer use 3f9c1a2b     # pin one profile
 pointer use auto         # follow the profile you use again
 ```
+
+Agents on MCP can do the same: `browsers_list` shows each profile with a few of its tabs, and
+`browser_use` switches (agents are told to switch only when you ask). `browser_status` says whether
+the hub is pinned. If it is pinned to another profile, the Pointer popup in this one says so and
+offers **Use this profile**.
+
+`browsers_list` shows the agent the titles and addresses of the first three tabs in every connected
+profile, not only the one it drives, so it can tell them apart. Sites blocked in a profile's
+settings stay hidden there.
 
 ## What you see, and settings
 

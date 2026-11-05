@@ -30,6 +30,7 @@ export async function loadWorker({ tabs = [], groups = [], settings = {}, sessio
       this.readyState = 1; // never fires "open": no heartbeat timer keeps the test alive
       this.l = {};
       this.replies = [];
+      this.events = []; // what the worker told the hub on its own: hello, focus, stop, use
       socket = this;
     }
     addEventListener(type, f) {
@@ -38,6 +39,7 @@ export async function loadWorker({ tabs = [], groups = [], settings = {}, sessio
     send(s) {
       const m = JSON.parse(s);
       if (m.id) this.replies.push(m);
+      else this.events.push(m);
     }
     close() {}
   };
@@ -176,6 +178,13 @@ export async function loadWorker({ tabs = [], groups = [], settings = {}, sessio
           if (f(msg, { id: "pointer-test" }, resolve) !== true) resolve();
         }
       });
+    },
+    /** Events the worker sent the hub (not replies to commands). */
+    events: () => socket.events,
+    /** A message from the hub that is not a command, like { event: "hub" }. */
+    async hubEvent(msg) {
+      await socket.l.message({ data: JSON.stringify(msg) });
+      await tick(5);
     },
     async alarm() {
       for (const f of listeners.alarm) f({ name: "pointer-keepalive" });

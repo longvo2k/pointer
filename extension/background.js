@@ -35,6 +35,8 @@ const HUB_URL = `ws://127.0.0.1:${DEFAULT_PORT}/ext`;
 let socket = null;
 let reconnectDelay = 800;
 let connected = false;
+/** What the hub last said about this profile: { active, pinned, browsers }, or null. */
+let hubRole = null;
 let lastTabId = null;
 let lastFocusedTab = null;
 let agentName = "agent";
@@ -197,6 +199,11 @@ function connect() {
     } catch {
       return;
     }
+    if (msg?.event === "hub") {
+      // Whether agents work in this profile, and whether the hub is pinned.
+      hubRole = { active: msg.active === true, pinned: msg.pinned === true, browsers: Number(msg.browsers) || 0 };
+      return;
+    }
     if (!msg || !msg.id) return;
     if (typeof msg.method !== "string") {
       sendOn({ id: msg.id, ok: false, error: "Malformed command: method is missing" });
@@ -228,6 +235,7 @@ function connect() {
     if (socket !== ws) return; // an old socket; the live one is unaffected
     socket = null;
     connected = false;
+    hubRole = null;
     clearInterval(heartbeat);
     setBadge("off");
     clearTimeout(reconnectTimer);
@@ -374,9 +382,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           attached: [...attached],
           groups,
           socket: HUB_URL,
+          hub: hubRole,
         });
       });
     return true;
+  }
+  if (msg.type === "pointer:use-here") {
+    // The human chose this profile in the popup: the hub pins agents to it.
+    const open = socket?.readyState === WebSocket.OPEN;
+    send({ event: "use" });
+    sendResponse({ ok: open });
+    return;
   }
   if (msg.type === "pointer:reconnect") {
     try {

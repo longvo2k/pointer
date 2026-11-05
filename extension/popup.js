@@ -35,6 +35,9 @@ async function refresh() {
   q("status").dataset.state = state;
   q("status-text").textContent = { offline: "Offline", stopped: "Stopped", connected: "Connected" }[state];
 
+  // Pinned to another profile: clicking the icon here changes nothing, so say why.
+  q("elsewhere").hidden = !(connected && status.hub?.pinned && !status.hub.active);
+
   // Agent card
   const hasAgent = connected && !!tab;
   q("active").hidden = !hasAgent;
@@ -69,6 +72,15 @@ async function reconnect(btn) {
 
 q("reconnect").addEventListener("click", (e) => reconnect(e.currentTarget));
 q("reconnect-main").addEventListener("click", (e) => reconnect(e.currentTarget));
+
+q("use-here").addEventListener("click", async (e) => {
+  e.currentTarget.disabled = true;
+  await chrome.runtime.sendMessage({ type: "pointer:use-here" }).catch(() => {});
+  setTimeout(async () => {
+    await refresh();
+    q("use-here").disabled = false;
+  }, 300);
+});
 
 q("tab").addEventListener("click", async () => {
   if (!currentTab) return;

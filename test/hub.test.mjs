@@ -32,20 +32,41 @@ function connect(origin = EXT_ORIGIN) {
 }
 
 /** A fake extension that answers every command with its own name. */
-async function fakeBrowser(name, { focusedAt = 0, build = "1.0.0" } = {}) {
+async function fakeBrowser(name, { focusedAt = 0, build = "1.0.0", tabs = null, silent = false } = {}) {
   const ws = await connect();
+  const received = []; // commands this browser got
+  const roles = []; // "hub" events: whether this browser is active and pinned
   ws.on("message", (raw) => {
     const m = JSON.parse(raw);
-    if (m.id) ws.send(JSON.stringify({ id: m.id, ok: true, result: name }));
+    if (m.event === "hub") return roles.push(m);
+    if (!m.id) return;
+    received.push(m);
+    if (silent) return;
+    const result = m.method === "tabs.list" && tabs ? tabs : name;
+    ws.send(JSON.stringify({ id: m.id, ok: true, result }));
   });
   ws.send(JSON.stringify({ event: "hello", version: "1.0.0", build, instanceId: name, lastFocusedAt: focusedAt }));
   await wait(50);
-  return { ws, focus: () => ws.send(JSON.stringify({ event: "focus", at: Date.now() })) };
+  return {
+    ws,
+    received,
+    roles,
+    focus: () => ws.send(JSON.stringify({ event: "focus", at: Date.now() })),
+    id: () => hub.listExtensions().find((e) => e.instanceId === name).id,
+  };
+}
+
+function rpc(method, params) {
+  return request("/rpc", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ method, params }),
+  }).then((res) => JSON.parse(res.body));
 }
 
 let hub;
 before(async () => {
-  hub = await new Hub({ port, followIdleMs: 300, extensionIds: ["a".repeat(32)] }).start();
+  hub = await new Hub({ port, followIdleMs: 300, previewTimeoutMs: 300, extensionIds: ["a".repeat(32)] }).start();
 });
 after(async () => {
   await hub.stop();
@@ -201,4 +222,126 @@ test("rpc refuses an oversized body", async () => {
     body,
   });
   assert.equal(res.status, 413);
+});
+
+test("ext.list with tabs previews each browser's tabs without switching to it", async () => {
+  hub.pinned = false;
+  const A = await fakeBrowser("preview-A", { focusedAt: Date.now() });
+  const kai = await fakeBrowser("preview-Kai", {
+    tabs: [
+      { tabId: 1, title: "Kai — Inbox", url: "https://mail.example.com/", active: true },
+      { tabId: 2, title: "Kai — Dashboard", url: "https://app.example.com/dash" },
+      { tabId: 3, title: "Docs", url: "https://docs.example.com/" },
+      { tabId: 4, title: "Fourth", url: "https://four.example.com/" },
+    ],
+  });
+  hub.activeId = A.id();
+  const lastCallAt = (hub.lastCallAt = 12345);
+  const res = await rpc("ext.list", { tabs: true });
+  assert.equal(res.ok, true);
+  const k = res.result.find((b) => b.instanceId === "preview-Kai");
+  assert.equal(k.tabCount, 4);
+  assert.deepEqual(k.tabs.map((t) => t.title), ["Kai — Inbox", "Kai — Dashboard", "Docs"]);
+  assert.equal(k.tabs[0].url, "https://mail.example.com/");
+  assert.equal(hub.activeId, A.id(), "previewing does not switch browsers");
+  assert.equal(hub.lastCallAt, lastCallAt, "previewing does not count as an agent call");
+  const sent = kai.received.find((m) => m.method === "tabs.list");
+  assert.equal(sent.params.agent, undefined, "the other profile's agent label is left alone");
+  const plain = await rpc("ext.list");
+  assert.equal(plain.result[0].tabs, undefined, "without tabs, ext.list is unchanged");
+  A.ws.close();
+  kai.ws.close();
+  await wait(100);
+});
+
+test("a browser that does not answer the preview is listed with an error", async () => {
+  const quiet = await fakeBrowser("preview-quiet", { silent: true });
+  const started = Date.now();
+  const res = await rpc("ext.list", { tabs: true });
+  const q = res.result.find((b) => b.instanceId === "preview-quiet");
+  assert.match(q.tabsError, /did not answer/);
+  assert.ok(Date.now() - started < 2000);
+  quiet.ws.close();
+  await wait(100);
+});
+
+test("every browser is told whether it is active and whether the hub is pinned", async () => {
+  hub.pinned = false;
+  const A = await fakeBrowser("role-A", { focusedAt: Date.now() });
+  const B = await fakeBrowser("role-B");
+  hub.activeId = A.id();
+  await rpc("ext.use", { id: B.id() });
+  await wait(50);
+  assert.deepEqual(
+    (({ active, pinned, browsers }) => ({ active, pinned, browsers }))(A.roles.at(-1)),
+    { active: false, pinned: true, browsers: 2 }
+  );
+  assert.equal(B.roles.at(-1).active, true);
+  await rpc("ext.use", { id: "auto" });
+  await wait(50);
+  assert.equal(A.roles.at(-1).pinned, false);
+  A.ws.close();
+  B.ws.close();
+  await wait(100);
+});
+
+test("the human picking a profile in its popup pins the hub there", async () => {
+  hub.pinned = false;
+  const A = await fakeBrowser("pick-A", { focusedAt: Date.now() });
+  const kai = await fakeBrowser("pick-Kai");
+  await rpc("ext.use", { id: A.id() });
+  kai.ws.send(JSON.stringify({ event: "use" }));
+  await wait(50);
+  assert.equal(hub.activeId, kai.id());
+  assert.equal(hub.pinned, true);
+  assert.equal(kai.roles.at(-1).active, true);
+  assert.equal(A.roles.at(-1).active, false);
+  A.ws.close();
+  kai.ws.close();
+  hub.pinned = false;
+  await wait(100);
+});
+
+test("a connection that never said hello cannot take the hub", async () => {
+  hub.pinned = false;
+  const A = await fakeBrowser("nohello-A", { focusedAt: Date.now() });
+  hub.activeId = A.id();
+  const silent = await connect();
+  silent.send(JSON.stringify({ event: "use" }));
+  await wait(50);
+  assert.equal(hub.activeId, A.id());
+  assert.equal(hub.pinned, false);
+  A.ws.close();
+  silent.close();
+  await wait(100);
+});
+
+test("when the pinned browser goes away, the hub stops claiming a pin", async () => {
+  hub.pinned = false;
+  const A = await fakeBrowser("gone-A", { focusedAt: Date.now() });
+  const B = await fakeBrowser("gone-B");
+  await rpc("ext.use", { id: B.id() });
+  B.ws.close();
+  await wait(100);
+  assert.equal(hub.pinned, false);
+  assert.equal(A.roles.at(-1).pinned, false);
+  A.ws.close();
+  await wait(100);
+});
+
+test("ext.use refuses an ambiguous prefix and a browser that never said hello", async () => {
+  hub.pinned = false;
+  const A = await fakeBrowser("amb-A");
+  const B = await fakeBrowser("amb-B");
+  const res = await rpc("ext.use", { id: "" });
+  assert.equal(res.ok, false);
+  assert.match(res.error, /more than one|Pass/);
+  const silent = await connect();
+  await wait(30);
+  const silentId = hub.listExtensions().find((e) => !e.instanceId).id;
+  const s = await rpc("ext.use", { id: silentId });
+  assert.equal(s.ok, false);
+  assert.equal(hub.pinned, false);
+  for (const ws of [A.ws, B.ws, silent]) ws.close();
+  await wait(100);
 });
