@@ -244,6 +244,7 @@ show up too, so the agent sees "Saved" or "Pick a plan to continue" without anot
 | Read | `snapshot`, `find`, `read_text`, `screenshot`, `wait_for` |
 | Screen size and layout | `viewport`, `layout` |
 | Act | `click`, `hover`, `fill`, `press`, `scroll`, `navigate`, `upload`, `dialog` |
+| Verify | `verify`, and `expect` on `click`, `fill`, `press` |
 | Debug | `console`, `network` |
 | Narrate, mark done | `say` |
 | Stop | `stop`, `resume` |
@@ -284,6 +285,25 @@ A few that need explaining:
   `click`, `hover`, `fill`, `press`, and `scroll` take `say` too, to caption a step right before it.
   `say` with `done: true` (CLI: `pointer say --done "summary"`) tells you the task is finished: the
   bar becomes a ✅ mark and, if you turned it on, you get a notification.
+- `verify` proves an outcome instead of assuming it. It checks that text is shown (`text`) or gone
+  (`gone`), an element is visible (`selector`), a field holds a value (`field` + `equals`), the URL
+  matches (`url`), or a request sent after the last action got the right status (`request`, `status`),
+  and keeps checking until all pass or `timeout` (default 5s). `click`, `fill`, and `press` take the
+  same checks as `expect`, so one call acts and proves the result:
+
+  ```
+  clicked button "Save" → https://example.com/items/42
+  ...
+
+  verified (2 checks, 0.4s):
+  ✓ text "Item saved" — "Item saved successfully"
+  ✓ request POST /api/items — POST 201 example.com/api/items (142ms)
+  ```
+
+  On failure it says `NOT verified` and shows what happened instead: error messages on the page, or
+  the request's status and the start of the server's reply. Values of password and other secret
+  fields are never shown. A `request` check turns on network capture before the action; Pointer
+  never reloads a page on its own to check.
 - `console` and `network` read the tab's errors and requests. Capture starts on the first call
   (`reload: true` captures a page load), because turning it on makes the debugger easier for anti-bot
   scripts to notice.
@@ -298,6 +318,7 @@ pointer click e14
 pointer fill e9 "hello"
 pointer hover e7                      # open a hover menu
 pointer back                          # also: forward, nav reload
+pointer verify --text "Saved" --url /items/   # --gone, --selector, --field e4 --equals x, --request "POST /api/items" --status 201, --timeout ms
 pointer dialog dismiss
 pointer upload e4 ~/resume.pdf
 pointer console errors --reload

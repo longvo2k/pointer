@@ -168,6 +168,7 @@ Never guess a CSS selector when a ref exists.
 | Move down a long page / reveal an element | `scroll` (direction, amount, or ref) | `scroll [up\|down] [px]` |
 | Read prose without HTML | `read_text` | `text` |
 | Wait for text, a selector, or time | `wait_for` | `wait <text\|ms>` |
+| Prove an action worked (text, gone, field value, URL, request status) | `verify`, or `expect` on `click`/`fill`/`press` | `verify --text <t> [--request "POST /api/x"] ...` |
 | Show the human the current state | `screenshot` | `shot <path.png>` |
 | Check a responsive layout | `viewport` (mobile, tablet, desktop, reset, or width + height) | `viewport <preset\|W H>` |
 | Find layout bugs in exact pixels | `layout` (`scope`) | `layout [--screen]` |
@@ -188,6 +189,12 @@ Notes that save a round trip:
   next; a click on something else moves the pointer away and the menu may close.
 - `navigate` back, forward, or reload returns the new view. Refs from before it are gone.
 - `wait_for` is cheaper than polling with repeated snapshots after a click that loads data.
+- **Prove outcomes, don't assume them.** When an action's result matters (save, submit, delete,
+  sign in), pass `expect` on it, e.g. `click { ref: "e12", expect: { text: "Saved", request: "POST /api/items" } }`.
+  The result ends with `verified` or `NOT verified`, one line of evidence per check, and on failure
+  the page's error messages or the server's reply. Report `NOT verified` to the human as a failure;
+  never say something was saved when it was not verified. A `request` check needs capture from before
+  the action, which `expect` starts for you. To prove data persisted, `navigate` reload, then `verify`.
 - `screenshot` captures the agent's tab, including the pointer label, even when the human is on
   another tab. Use it when layout or visual state matters; use `snapshot` when you need to act.
 - `viewport` changes the screen size of your tab only, never the human's window. For a responsive

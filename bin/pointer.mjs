@@ -14,6 +14,7 @@
  *   pointer nav back|forward|reload  (also: pointer back, pointer forward)
  *   pointer fill <ref|css> <text...>
  *   pointer press <key>
+ *   pointer verify --text <t>   prove an outcome (--gone, --selector, --field/--equals, --url, --request, --status, --timeout)
  *   pointer scroll [up|down] [px]
  *   pointer text             read the page as text
  *   pointer shot [path]      screenshot (saves PNG, prints path)
@@ -311,6 +312,17 @@ async function main() {
     case "text":
     case "read":
       return print((await tool("read_text")).text);
+    case "verify": {
+      const flag = (name) => {
+        const i = rest.indexOf(`--${name}`);
+        return i >= 0 ? rest[i + 1] : undefined;
+      };
+      const args = {};
+      for (const k of ["text", "gone", "selector", "field", "equals", "url", "request"]) if (flag(k) != null) args[k] = flag(k);
+      for (const k of ["status", "timeout"]) if (flag(k) != null) args[k] = Number(flag(k));
+      if (rest.includes("--screenshot")) args.screenshot = true;
+      return print((await tool("verify", args)).text);
+    }
     case "wait":
       return print((await tool("wait_for", /^\d+$/.test(rest[0] || "") ? { ms: Number(rest[0]) } : { text: rest.join(" ") })).text);
     case "shot":
