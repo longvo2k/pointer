@@ -292,3 +292,117 @@ test("screenshot help says what is left out of the image", () => {
   assert.doesNotMatch(shot.description, /Includes the pointer/);
   assert.match(shot.description, /left out unless you pass caption: true/);
 });
+
+// ---------------------------------------------------------- browser picking ---
+import http from "node:http";
+
+const NOW = Date.now();
+const BROWSERS = [
+  {
+    id: "e681844f-1111", instanceId: "i1", build: "0.2.25", version: "0.2.25", stale: false,
+    active: true, pinned: true, connectedAt: NOW - 300_000, lastFocusedAt: NOW - 120_000,
+    tabCount: 2, tabs: [{ title: "Other project", url: "https://other.example.com/board" }, { title: "Docs", url: "https://docs.example.com/" }],
+  },
+  {
+    id: "a8e4b2f6-2222", instanceId: "i2", build: "0.2.25", version: "0.2.25", stale: false,
+    active: false, pinned: false, connectedAt: NOW - 3_600_000, lastFocusedAt: NOW - 10_000,
+    tabCount: 12, tabs: [{ title: "Kai — Inbox", url: "https://mail.example.com/inbox?token=abc#x" }],
+  },
+  { id: "c0ffee00-3333", instanceId: "i3", build: "0.2.25", version: "0.2.25", active: false, pinned: false, connectedAt: NOW - 60_000, lastFocusedAt: 0, tabsError: "did not answer in time" },
+];
+
+function pickingHub(browsers = BROWSERS) {
+  const calls = [];
+  return {
+    calls,
+    port: 1,
+    call: async (method, params) => {
+      calls.push([method, params]);
+      if (method === "ext.list") return browsers;
+      if (method === "ext.use") {
+        if (params.id === "auto") return { active: browsers[1].id, pinned: false };
+        const m = browsers.find((b) => b.id.startsWith(params.id));
+        if (!m) throw new Error(`No browser matching ${params.id}`);
+        return { active: m.id, pinned: true };
+      }
+      if (method === "ext.status") return { agentName: "agent", groups: [], attached: [] };
+      throw new Error(method);
+    },
+  };
+}
+
+test("browsers_list shows each profile with its tabs, the mode, and how to switch", async () => {
+  const hub = pickingHub();
+  const out = await callTool(hub, "browsers_list", {});
+  assert.deepEqual(hub.calls[0], ["ext.list", { tabs: true }]);
+  assert.match(out.text, /^3 browsers connected\. Mode: pinned to e681844f/);
+  assert.match(out.text, /→ e681844f {2}active, pinned/);
+  assert.match(out.text, /a8e4b2f6 .*focused 10s ago/);
+  assert.match(out.text, /12 tabs, e\.g\.:\n\s+Kai — Inbox — mail\.example\.com\/inbox\?token=…/);
+  assert.doesNotMatch(out.text, /abc|#x/, "tokens and fragments are stripped");
+  assert.match(out.text, /c0ffee00 .*\n\s+tabs: did not answer in time/);
+  assert.match(out.text, /browser_use/);
+  assert.match(out.text, /only when the human asks/);
+});
+
+test("browsers_list with nothing connected says so", async () => {
+  const out = await callTool(pickingHub([]), "browsers_list", {});
+  assert.match(out.text, /No browser connected/);
+});
+
+test("browser_use pins a browser by id prefix, or follows focus with auto", async () => {
+  const hub = pickingHub();
+  const pinned = await callTool(hub, "browser_use", { id: "a8e4" });
+  assert.deepEqual(hub.calls.at(-1), ["ext.use", { id: "a8e4" }]);
+  assert.match(pinned.text, /^Pinned to a8e4b2f6\./);
+  assert.match(pinned.text, /Tell the human/);
+  const auto = await callTool(hub, "browser_use", { id: "auto" });
+  assert.match(auto.text, /^Following the profile the human uses/);
+});
+
+test("browser_use with an unknown id lists the ids that exist", async () => {
+  await assert.rejects(callTool(pickingHub(), "browser_use", { id: "zzzz" }), /No browser matching zzzz.*e681844f, a8e4b2f6, c0ffee00/s);
+  await assert.rejects(callTool(pickingHub(), "browser_use", {}), /Pass id/);
+});
+
+test("browser_use says to switch only when the human asks, and nothing else switches", () => {
+  const use = TOOLS.find((t) => t.name === "browser_use");
+  assert.match(use.description, /only when the human asks/i);
+  assert.deepEqual(use.inputSchema.required, ["id"]);
+  const list = TOOLS.find((t) => t.name === "browsers_list");
+  assert.ok(list, "browsers_list exists");
+});
+
+async function withHealth(fn) {
+  const server = http.createServer((_q, r) => r.end(JSON.stringify({ ok: true, extension: true })));
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  try {
+    return await fn(server.address().port);
+  } finally {
+    server.close();
+  }
+}
+
+test("browser_status says the hub is pinned and why focus changes are ignored", async () => {
+  await withHealth(async (port) => {
+    const hub = { ...pickingHub(), port };
+    const out = await callTool(hub, "browser_status", {});
+    assert.match(out.text, /Browser: e681844f/);
+    assert.match(out.text, /Mode: pinned/);
+    assert.match(out.text, /Other browsers: a8e4b2f6, c0ffee00/);
+    assert.match(out.text, /focus changes in other profiles are ignored/);
+    assert.match(out.text, /browsers_list/);
+    assert.match(out.text, /browser_use/);
+  });
+});
+
+test("browser_status following focus has no pin hint", async () => {
+  await withHealth(async (port) => {
+    const unpinned = BROWSERS.map((b) => ({ ...b, pinned: false }));
+    const out = await callTool({ ...pickingHub(unpinned), port }, "browser_status", {});
+    assert.match(out.text, /Mode: following focus/);
+    assert.doesNotMatch(out.text, /are ignored/);
+    const single = await callTool({ ...pickingHub([unpinned[0]]), port }, "browser_status", {});
+    assert.doesNotMatch(single.text, /Other browsers/);
+  });
+});

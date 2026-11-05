@@ -86,7 +86,9 @@ Expected: `Extension: connected`. If not:
 
 If more than one Chrome profile has the extension loaded (a work profile and a personal one, say), a
 new task starts in the profile the human focused last; a task in progress stays where it is. If the
-human wants a specific profile, or actions land in the wrong one, check and choose explicitly:
+human wants a specific profile, or actions land in the wrong one, check and choose explicitly. `browsers_list` shows each profile with a few of its tabs, so you can
+tell which one the human means; `browser_use` switches. Switch only when the human asks, and tell them
+which profile you now use. `browser_status` says `Mode: pinned` when focus changes are ignored.
 
 ```bash
 ./scripts/pointer browsers      # ids, builds, last focus, which one is active
@@ -151,6 +153,7 @@ Never guess a CSS selector when a ref exists.
 | You need | MCP tool | CLI |
 |---|---|---|
 | Is the extension connected? | `browser_status` | `status` |
+| Which Chrome profiles are connected; switch profile (only if the human asks) | `browsers_list`, `browser_use` | `browsers`, `use <id\|auto>` |
 | Open a page (background tab) | `tab_open` | `open <url>` |
 | See or switch tabs (without disturbing the human) | `tabs_list`, `tab_select` | `tabs`, `select <tabId>` |
 | Close your tabs when done (including tabs your clicks opened) | `tab_close` (`all: true`) | `close [tabId\|--all]` |
