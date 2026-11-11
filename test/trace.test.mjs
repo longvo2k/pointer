@@ -4,11 +4,11 @@ import assert from "node:assert/strict";
 import WebSocket from "ws";
 import { Hub } from "../lib/hub.mjs";
 
-const port = 19400 + Math.floor(Math.random() * 400);
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 test("a failed call keeps the extension's trace; a good one returns it in the result", async () => {
-  const hub = await new Hub({ port, extensionIds: ["b".repeat(32)] }).start();
+  const hub = await new Hub({ port: 0, extensionIds: ["b".repeat(32)] }).start();
+  const port = hub.port;
   const ws = new WebSocket(`ws://127.0.0.1:${port}/ext`, { origin: "chrome-extension://" + "b".repeat(32) });
   await new Promise((r, j) => (ws.on("open", r), ws.on("error", j)));
   ws.on("message", (raw) => {
