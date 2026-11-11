@@ -144,3 +144,117 @@ test("no Local State: ext.profiles says why and ext.list is unchanged", async ()
   assert.equal(list[0].instanceId, "inst-plain");
   b.ws.close();
 });
+
+/** A launcher that records each call and, if asked, starts Pointer in that profile shortly after. */
+function fakeLauncher({ connect } = {}) {
+  const calls = [];
+  const fn = (dir) => {
+    calls.push(dir);
+    if (connect) setTimeout(() => connect(dir), 100);
+  };
+  fn.calls = calls;
+  return fn;
+}
+
+test("pins an open profile by name, email or prefix", async () => {
+  const dir = chromeDir();
+  const launch = fakeLauncher();
+  const hub = await startHub({ chromeDir: dir, launch });
+  const work = await fakeBrowser(hub, dir, "Default", "inst-w1");
+  for (const profile of ["work", "w@co.com", "Wo"]) {
+    const res = await rpc(hub, "ext.use", { profile });
+    assert.equal(res.ok, true, res.error);
+    assert.equal(res.result.active, work.id());
+    assert.equal(res.result.pinned, true);
+    assert.equal(res.result.opened, false);
+    assert.equal(res.result.profile.name, "Work");
+  }
+  assert.deepEqual(launch.calls, []);
+  work.ws.close();
+});
+
+test("opens a closed profile and switches to it", async () => {
+  const dir = chromeDir();
+  let hub;
+  const launch = fakeLauncher({ connect: (p) => fakeBrowser(hub, dir, p, "inst-x1") });
+  hub = await startHub({ chromeDir: dir, launch });
+  const work = await fakeBrowser(hub, dir, "Default", "inst-w2");
+  const res = await rpc(hub, "ext.use", { profile: "Client X" });
+  assert.equal(res.ok, true, res.error);
+  assert.deepEqual(launch.calls, ["Profile 5"]);
+  assert.equal(res.result.opened, true);
+  assert.equal(res.result.active, hub.listExtensions().find((e) => e.instanceId === "inst-x1").id);
+  assert.equal(hub.pinned, true);
+  work.ws.close();
+});
+
+test("concurrent opens launch once", async () => {
+  const dir = chromeDir();
+  let hub;
+  const launch = fakeLauncher({ connect: (p) => fakeBrowser(hub, dir, p, "inst-x2") });
+  hub = await startHub({ chromeDir: dir, launch });
+  const [a, b] = await Promise.all([rpc(hub, "ext.use", { profile: "Client X" }), rpc(hub, "ext.use", { profile: "client" })]);
+  assert.equal(a.ok, true, a.error);
+  assert.equal(b.ok, true, b.error);
+  assert.equal(launch.calls.length, 1);
+  assert.equal(a.result.active, b.result.active);
+});
+
+test("a closed profile without Pointer is not opened", async () => {
+  const dir = chromeDir({ running: ["Default"] });
+  const launch = fakeLauncher();
+  const hub = await startHub({ chromeDir: dir, launch });
+  const res = await rpc(hub, "ext.use", { profile: "Personal" });
+  assert.equal(res.ok, false);
+  assert.match(res.error, /Pointer isn't installed in Personal\. Ask the human to add it there first\./);
+  assert.deepEqual(launch.calls, []);
+});
+
+test("a launch that never connects", async () => {
+  const dir = chromeDir();
+  const launch = fakeLauncher();
+  const hub = await startHub({ chromeDir: dir, launch });
+  const work = await fakeBrowser(hub, dir, "Default", "inst-w3");
+  const before = { active: hub.activeId, pinned: hub.pinned };
+  const res = await rpc(hub, "ext.use", { profile: "Client X" });
+  assert.equal(res.ok, false);
+  assert.match(res.error, /Opened Client X, but Pointer did not connect within 20 s\. Ask the human to check that Pointer is turned on in that profile\./);
+  assert.deepEqual({ active: hub.activeId, pinned: hub.pinned }, before);
+  work.ws.close();
+});
+
+test("a running profile is never launched", async () => {
+  const dir = chromeDir({ running: ["Default", "Profile 5"] });
+  const launch = fakeLauncher();
+  const hub = await startHub({ chromeDir: dir, launch });
+  const res = await rpc(hub, "ext.use", { profile: "Client X" });
+  assert.equal(res.ok, false);
+  assert.match(res.error, /Client X is open in Chrome, but Pointer isn't connected there\. Ask the human to check that Pointer is turned on in that profile\./);
+  assert.deepEqual(launch.calls, []);
+
+  // Pointer reconnects there a moment later: the wait ends with a switch, still no launch.
+  setTimeout(() => fakeBrowser(hub, dir, "Profile 5", "inst-x3"), 100);
+  const later = await rpc(hub, "ext.use", { profile: "Client X" });
+  assert.equal(later.ok, true, later.error);
+  assert.equal(later.result.opened, false);
+  assert.deepEqual(launch.calls, []);
+});
+
+test("ambiguous names list the choices", async () => {
+  const dir = chromeDir({ extra: { "Profile 6": { name: "Workshop", user_name: "" } } });
+  const hub = await startHub({ chromeDir: dir, launch: fakeLauncher() });
+  const res = await rpc(hub, "ext.use", { profile: "wor" });
+  assert.equal(res.ok, false);
+  assert.match(res.error, /Work\b/);
+  assert.match(res.error, /Workshop/);
+});
+
+test("a connection id still works where a profile is expected", async () => {
+  const dir = chromeDir();
+  const hub = await startHub({ chromeDir: dir, launch: fakeLauncher() });
+  const ghost = await fakeBrowser(hub, dir, null, "inst-ghost2");
+  const res = await rpc(hub, "ext.use", { profile: ghost.id().slice(0, 8) });
+  assert.equal(res.ok, true, res.error);
+  assert.equal(res.result.active, ghost.id());
+  ghost.ws.close();
+});
