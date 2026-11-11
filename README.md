@@ -342,19 +342,27 @@ so its tabs and refs keep working. A task counts as new after 2 minutes without 
 (`POINTER_FOLLOW_IDLE_MS`).
 
 ```bash
-pointer browsers         # each profile: build, last focus, which one is active
-pointer use 3f9c1a2b     # pin one profile
+pointer browsers         # every Chrome profile by name and email, open or closed
+pointer use Work         # switch to the profile named Work (its email or folder works too)
 pointer use auto         # follow the profile you use again
 ```
 
-Agents on MCP can do the same: `browsers_list` shows each profile with a few of its tabs, and
-`browser_use` switches (agents are told to switch only when you ask). `browser_status` says whether
-the hub is pinned. If it is pinned to another profile, the Pointer popup in this one says so and
-offers **Use this profile**.
+Pointer reads the profile names and emails from Chrome's own `Local State` file on your computer,
+so agents see "Work (you@company.com)" instead of a random id, including profiles that are closed.
 
-`browsers_list` shows the agent the titles and addresses of the first three tabs in every connected
-profile, not only the one it drives, so it can tell them apart. Sites blocked in a profile's
-settings stay hidden there.
+Agents on MCP can do the same: `browsers_list` lists every profile with a few tabs of each open one,
+and `browser_use { profile: "Work" }` switches (agents are told to switch only when you ask). If that
+profile is closed, Pointer opens it in Chrome and waits up to 20 seconds for the extension to connect
+there. If Chrome already has it open but Pointer has not reconnected yet, Pointer waits instead of
+opening a second window. A profile without Pointer installed is never opened. `browser_status` names
+the profile in use and says whether the hub is pinned. If it is pinned to another profile, the
+Pointer popup in this one says so and offers **Use this profile**.
+
+`browsers_list` shows the agent the name and email of every Chrome profile, and the titles and
+addresses of the first three tabs in every connected profile, not only the one it drives, so it can
+tell them apart. Sites blocked in a profile's settings stay hidden there. Google Chrome only for
+now: Beta, Canary, Chromium, Edge and Brave profiles are not listed (`POINTER_CHROME_DIR` points
+Pointer at another user data folder).
 
 ## What you see, and settings
 

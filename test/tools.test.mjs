@@ -334,7 +334,7 @@ function pickingHub(browsers = BROWSERS) {
 test("browsers_list shows each profile with its tabs, the mode, and how to switch", async () => {
   const hub = pickingHub();
   const out = await callTool(hub, "browsers_list", {});
-  assert.deepEqual(hub.calls[0], ["ext.list", { tabs: true }]);
+  assert.deepEqual(hub.calls.at(-1), ["ext.list", { tabs: true }], "an older hub without ext.profiles");
   assert.match(out.text, /^3 browsers connected\. Mode: pinned to e681844f/);
   assert.match(out.text, /→ e681844f {2}active, pinned/);
   assert.match(out.text, /a8e4b2f6 .*focused 10s ago/);
@@ -362,13 +362,14 @@ test("browser_use pins a browser by id prefix, or follows focus with auto", asyn
 
 test("browser_use with an unknown id lists the ids that exist", async () => {
   await assert.rejects(callTool(pickingHub(), "browser_use", { id: "zzzz" }), /No browser matching zzzz.*e681844f, a8e4b2f6, c0ffee00/s);
-  await assert.rejects(callTool(pickingHub(), "browser_use", {}), /Pass id/);
+  await assert.rejects(callTool(pickingHub(), "browser_use", {}), /Pass profile/);
 });
 
 test("browser_use says to switch only when the human asks, and nothing else switches", () => {
   const use = TOOLS.find((t) => t.name === "browser_use");
   assert.match(use.description, /only when the human asks/i);
-  assert.deepEqual(use.inputSchema.required, ["id"]);
+  assert.equal(use.inputSchema.required, undefined, "profile or id, neither required on its own");
+  assert.match(use.description, /closed.*opens it/i);
   const list = TOOLS.find((t) => t.name === "browsers_list");
   assert.ok(list, "browsers_list exists");
 });
@@ -405,4 +406,101 @@ test("browser_status following focus has no pin hint", async () => {
     const single = await callTool({ ...pickingHub([unpinned[0]]), port }, "browser_status", {});
     assert.doesNotMatch(single.text, /Other browsers/);
   });
+});
+
+
+// Profiles by name: what ext.profiles answers, and the tools that read it.
+const PROFILES = {
+  error: null,
+  profiles: [
+    { dir: "Profile 6", name: "Old test", email: "", running: false, installed: false, connections: [] },
+    { dir: "Profile 5", name: "Client X", email: "x@client.com", running: false, installed: true, connections: [] },
+    { dir: "Profile 4", name: "Personal", email: "me@home.com", running: false, installed: true, connections: ["p1"] },
+    { dir: "Default", name: "Work", email: "w@co.com", running: true, installed: true, connections: ["w2", "w1"] },
+    { dir: "Profile 7", name: "Side", email: "", running: true, installed: true, connections: [] },
+  ],
+  unknown: [{ id: "deadbeef-9", instanceId: "i9", active: false, pinned: false, profileDir: null, tabCount: 0 }],
+  browsers: [
+    { id: "w2", instanceId: "i2", active: true, pinned: true, profileDir: "Default", tabCount: 2, tabs: [{ title: "Board", url: "https://work.example.com/board" }] },
+    { id: "w1", instanceId: "i1", active: false, pinned: false, profileDir: "Default", tabCount: 0 },
+    { id: "p1", instanceId: "i3", active: false, pinned: false, profileDir: "Profile 4", tabCount: 0 },
+    { id: "deadbeef-9", instanceId: "i9", active: false, pinned: false, profileDir: null, tabCount: 0 },
+  ],
+};
+
+function profilesHub(result = PROFILES, use = {}) {
+  const calls = [];
+  return {
+    calls,
+    port: 1,
+    call: async (method, params) => {
+      calls.push([method, params]);
+      if (method === "ext.profiles") return result;
+      if (method === "ext.list") return result.browsers;
+      if (method === "ext.use") return use;
+      if (method === "ext.status") return { agentName: "agent", groups: [], attached: [] };
+      throw new Error(method);
+    },
+  };
+}
+
+test("browsers_list names every profile", async () => {
+  const hub = profilesHub();
+  const out = await callTool(hub, "browsers_list", {});
+  assert.deepEqual(hub.calls[0], ["ext.profiles", { tabs: true }]);
+  const t = out.text;
+  assert.match(t, /^5 Chrome profiles, 2 open with Pointer\. Mode: pinned to Work\./);
+  const order = [/→ Work\s+w@co\.com\s+open · active · pinned · 2 Pointer builds connected/, /Personal\s+me@home\.com\s+open/, /Side\s+open · Pointer not connected/, /Client X\s+x@client\.com\s+closed · Pointer installed/, /Old test\s+closed · Pointer not installed/, /\(unknown\)\s+deadbeef\s+open · profile not found in Chrome's list/];
+  let at = 0;
+  for (const re of order) {
+    const m = t.slice(at).match(re);
+    assert.ok(m, `${re} after position ${at}:\n${t}`);
+    at += m.index + m[0].length;
+  }
+  assert.match(t, /2 tabs, e\.g\.:\n\s+Board — work\.example\.com\/board/);
+  assert.match(t, /browser_use \{ profile: "…" \}/);
+  assert.match(t, /only when the human asks/);
+});
+
+test("browsers_list without Local State falls back", async () => {
+  const hub = profilesHub({ ...PROFILES, profiles: [], error: "Chrome's Local State not found in /x, so profile names are missing." });
+  const out = await callTool(hub, "browsers_list", {});
+  assert.match(out.text, /Local State not found/);
+  assert.match(out.text, /4 browsers connected/);
+});
+
+test("browsers_list on an older hub uses ext.list", async () => {
+  const out = await callTool(pickingHub(), "browsers_list", {});
+  assert.match(out.text, /^3 browsers connected/);
+});
+
+test("browser_use takes a profile", async () => {
+  const opened = profilesHub(PROFILES, { active: "x1", pinned: true, opened: true, profile: { name: "Client X", email: "x@client.com" } });
+  const out = await callTool(opened, "browser_use", { profile: "Client X" });
+  assert.deepEqual(opened.calls.at(-1), ["ext.use", { profile: "Client X" }]);
+  assert.match(out.text, /^Opened Client X and switched to it\./);
+  assert.match(out.text, /Tell the human/);
+  const open = profilesHub(PROFILES, { active: "w2", pinned: true, opened: false, profile: { name: "Work", email: "w@co.com" } });
+  assert.match((await callTool(open, "browser_use", { profile: "work" })).text, /Switched to Work \(w@co\.com\)/);
+  const auto = profilesHub(PROFILES, { active: "w2", pinned: false });
+  await callTool(auto, "browser_use", { profile: "auto" });
+  assert.deepEqual(auto.calls.at(-1), ["ext.use", { id: "auto" }]);
+});
+
+test("browser_status names the profile", async () => {
+  await withHealth(async (port) => {
+    const out = await callTool({ ...profilesHub(), port }, "browser_status", {});
+    assert.match(out.text, /Driving: Work \(w@co\.com\)/);
+  });
+});
+
+test("browsers_list still flags a stale extension copy", async () => {
+  const stale = { ...PROFILES, browsers: PROFILES.browsers.map((b) => (b.id === "p1" ? { ...b, stale: true, version: "0.3.0", build: "0.2.9" } : b)) };
+  const out = await callTool(profilesHub(stale), "browsers_list", {});
+  assert.match(out.text, /Personal .*stale: files are v0\.3\.0, Chrome runs 0\.2\.9/);
+});
+
+test("browser_use { profile } on an older hub explains the restart", async () => {
+  const old = { port: 1, call: async (m) => { if (m === "ext.use") throw new Error('Pass a browser id, or "auto"'); return []; } };
+  await assert.rejects(callTool(old, "browser_use", { profile: "Work" }), /older Pointer.*restart/i);
 });

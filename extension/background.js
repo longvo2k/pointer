@@ -183,6 +183,8 @@ function connect() {
       name: "pointer-extension",
       version: chrome.runtime.getManifest().version,
       instanceId,
+      // Lets the hub find this profile's folder: Chrome stores our data under this id.
+      extensionId: chrome.runtime.id,
       build: self.__pointerBuild || null,
       lastFocusedAt: await focusedAt(),
     });
