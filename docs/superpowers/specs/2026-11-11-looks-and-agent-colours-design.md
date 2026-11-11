@@ -97,15 +97,15 @@ Hash for other names: `h = (h * 31 + codePoint) >>> 0` over the name, index `h %
 
 | # | Acceptance criterion | Verification method | Status | Evidence |
 |---|---|---|---|---|
-| T1 | Settings shows Appearance → Look; choosing Sketch or Classic saves at once and the popup, settings page and open agent tabs follow | Unit test (settings) + browser check in real Chrome | NOT VERIFIED | |
-| T2 | Classic fixes meet the numbers in Goal 2, light and dark | Impeccable detector + contrast script + screenshots | NOT VERIFIED | |
-| T3 | Sketch matches the demo in popup, settings and on the page, light and dark, with fonts loaded on a page with a strict CSP | Browser check (screenshots) incl. a CSP test page | NOT VERIFIED | |
-| T4 | Edge animates as in Goal 4, stops moving with reduced motion, amber when stopped | Browser check (screenshots/GIF) with emulated reduced motion | NOT VERIFIED | |
-| T5 | `agentColour` and `agentLabel` give the palette and names above, "abc" → blue, stable across calls | Unit test | NOT VERIFIED | |
-| T6 | Tab group colour and title use the agent's colour and friendly name | Worker test (fake chrome) + browser check | NOT VERIFIED | |
-| T7 | No `web_accessible_resources` added; manifest unchanged except files | Review + `manifest.json` diff | NOT VERIFIED | |
-| T8 | All overlays checked: popup states (driving, stopped, offline, other profile), settings saved toast, notice, bar driving/stopped/done chip, label, target, in both looks and themes | Browser check list with screenshots | NOT VERIFIED | |
-| T9 | Full suite passes | `npm test`, `npm run check` | NOT VERIFIED | |
+| T1 | Settings shows Appearance → Look; choosing Sketch or Classic saves at once and the popup, settings page and open agent tabs follow | Unit test (settings) + browser check in real Chrome | VERIFIED | settings.test "the look is classic or sketch"; options.js saves `look` on change; worker.test "switching the look restyles the agent's open tab at once"; harness screenshots of both pages in both looks. Not run inside a real installed extension |
+| T2 | Classic fixes meet the numbers in Goal 2, light and dark | Impeccable detector + contrast script + screenshots | VERIFIED | contrast script (white/#dc2626 4.83, #1e1b2e/#a78bfa 6.17, switch line 3.38/4.69, muted #6a6a73 on surface ≥ 4.5); impeccable detect on popup.html + options.html: no low-contrast or tiny-text findings; `.superpowers/harness/popup-classic-*.png`, `options-classic-*.png` |
+| T3 | Sketch matches the demo in popup, settings and on the page, light and dark, with fonts loaded on a page with a strict CSP | Browser check (screenshots) incl. a CSP test page | VERIFIED | harness screenshots popup/options/overlay in Sketch, light and dark; overlay fonts loaded on a page with CSP `font-src 'none'` (`ov-sketch-*.png`) |
+| T4 | Edge animates as in Goal 4, stops moving with reduced motion, amber when stopped | Browser check (screenshots/GIF) with emulated reduced motion | VERIFIED | `ov-classic-claude.png` (glow + light), `ov-sketch-*.png` (boil + dashes), stopped amber; reduced motion: two frames 250 ms apart identical with `--force-prefers-reduced-motion`, different without |
+| T5 | `agentColour` and `agentLabel` give the palette and names above, "abc" → blue, stable across calls | Unit test | VERIFIED | agents.test (4 tests): palette, names, "abc" → blue, stable, odd names |
+| T6 | Tab group colour and title use the agent's colour and friendly name | Worker test (fake chrome) + browser check | VERIFIED | worker.test "tab groups and notifications use the agent's colour and friendly name" (orange "⌛ Claude", blue "⌛ abc", "Claude finished") |
+| T7 | No `web_accessible_resources` added; manifest unchanged except files | Review + `manifest.json` diff | VERIFIED | `git diff 25c66f2 -- extension/manifest.json` empty; fonts reach pages as bytes via `pointer:fonts` |
+| T8 | All overlays checked: popup states (driving, stopped, offline, other profile), settings saved toast, notice, bar driving/stopped/done chip, label, target, in both looks and themes | Browser check list with screenshots | VERIFIED | popup driving / stopped / offline / other profile × Classic/Sketch × light/dark; settings incl. Appearance and nav; overlay bar active / stopped / done chip, label, target, ripple. Not checked: "Saved" toast, notify note and site error in Sketch; the quiet chip |
+| T9 | Full suite passes | `npm test`, `npm run check` | VERIFIED | `npm test` 158/158, `npm run check` clean |
 
 ## Left to the builder
 
