@@ -21,6 +21,7 @@ test("missing settings get the defaults", () => {
     escStops: true,
     clickStops: true,
     blockedSites: [],
+    look: "classic",
   });
 });
 
@@ -42,4 +43,10 @@ test("defaults are never shared between calls", () => {
   const a = withDefaults(undefined);
   a.blockedSites.push("x.com/*");
   assert.deepEqual(withDefaults(undefined).blockedSites, []);
+});
+
+test("the look is classic or sketch", () => {
+  assert.equal(withDefaults({ look: "sketch" }).look, "sketch");
+  assert.equal(withDefaults({ look: "neon" }).look, "classic");
+  assert.equal(withDefaults({}).look, "classic");
 });

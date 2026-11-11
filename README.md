@@ -342,19 +342,27 @@ so its tabs and refs keep working. A task counts as new after 2 minutes without 
 (`POINTER_FOLLOW_IDLE_MS`).
 
 ```bash
-pointer browsers         # each profile: build, last focus, which one is active
-pointer use 3f9c1a2b     # pin one profile
+pointer browsers         # every Chrome profile by name and email, open or closed
+pointer use Work         # switch to the profile named Work (its email or folder works too)
 pointer use auto         # follow the profile you use again
 ```
 
-Agents on MCP can do the same: `browsers_list` shows each profile with a few of its tabs, and
-`browser_use` switches (agents are told to switch only when you ask). `browser_status` says whether
-the hub is pinned. If it is pinned to another profile, the Pointer popup in this one says so and
-offers **Use this profile**.
+Pointer reads the profile names and emails from Chrome's own `Local State` file on your computer,
+so agents see "Work (you@company.com)" instead of a random id, including profiles that are closed.
 
-`browsers_list` shows the agent the titles and addresses of the first three tabs in every connected
-profile, not only the one it drives, so it can tell them apart. Sites blocked in a profile's
-settings stay hidden there.
+Agents on MCP can do the same: `browsers_list` lists every profile with a few tabs of each open one,
+and `browser_use { profile: "Work" }` switches (agents are told to switch only when you ask). If that
+profile is closed, Pointer opens it in Chrome and waits up to 20 seconds for the extension to connect
+there. If Chrome already has it open but Pointer has not reconnected yet, Pointer waits instead of
+opening a second window. A profile without Pointer installed is never opened. `browser_status` names
+the profile in use and says whether the hub is pinned. If it is pinned to another profile, the
+Pointer popup in this one says so and offers **Use this profile**.
+
+`browsers_list` shows the agent the name and email of every Chrome profile, and the titles and
+addresses of the first three tabs in every connected profile, not only the one it drives, so it can
+tell them apart. Sites blocked in a profile's settings stay hidden there. Google Chrome only for
+now: Beta, Canary, Chromium, Edge and Brave profiles are not listed (`POINTER_CHROME_DIR` points
+Pointer at another user data folder).
 
 ## What you see, and settings
 
@@ -368,11 +376,19 @@ While an agent works in a tab, Pointer draws a thin line around it and a bar at 
 | "name is waiting for you" in amber | you stopped it; it must ask you before going on | `✋ name` |
 | "✅ name finished here" | the agent said it is done | `✅ name` |
 
+Each agent has its own colour on the line, the cursor, the bar and its Chrome tab group: Claude
+orange, Codex green, Cursor cyan, and any other agent blue, pink or purple (the same one every
+time, picked from its name). Known agents show by name, so `claude-code` reads "Claude". A stopped
+agent is amber whatever its colour. While an agent works, the line glows and a light runs round it;
+with your system's "reduce motion" on, it stays still.
+
 None of this shows up in the agent's screenshots.
 
 Open the settings from the gear in the Pointer popup, or right-click the toolbar icon and choose
 **Options**. You can:
 
+- pick a **Look**: Classic (clean and quiet) or Sketch (hand-drawn, with handwritten labels). It
+  changes the popup, the settings page, and what Pointer draws on web pages;
 - turn the bar, the line, the action labels, and the tab-group marks on or off, and pick a Fast cursor;
 - get a notification when the agent finishes or is waiting for you (Chrome asks once; off until you
   turn it on, and only when you are looking at something else);
@@ -533,7 +549,9 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Run `npm test` before sending a change.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE). The Sketch look ships two fonts under the SIL Open Font License 1.1:
+[Caveat](https://github.com/googlefonts/caveat) and Patrick Hand by Patrick Wagesreiter (licences in
+`extension/fonts/`).
 
 ## Acknowledgements
 

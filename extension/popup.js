@@ -1,3 +1,5 @@
+import { agentLabel, agentColour } from "./agents.js";
+
 const q = (id) => document.getElementById(id);
 let currentTab = null;
 
@@ -46,8 +48,15 @@ async function refresh() {
     ? "Connected. No tab in use yet."
     : "Can't reach the hub. Make sure the Pointer server is running.";
   if (hasAgent) {
-    q("agent-name").textContent = status.agentName || "agent";
+    q("agent-name").textContent = agentLabel(status.agentName);
+    // The agent's own colour on its dot and tag, as on the page and in its tab group.
+    const colour = agentColour(status.agentName);
+    const card = q("active");
+    card.style.setProperty("--agent", colour.edge);
+    card.style.setProperty("--agent-strong", colour.strong);
+    card.style.setProperty("--agent-soft", colour.soft);
     q("agent-tag").textContent = stopped ? "stopped" : "driving";
+    q("agent-tag").classList.toggle("stopped", stopped); // amber for every agent
     q("tab-title").textContent = tab.title || "Untitled tab";
     q("tab-host").textContent = hostOf(tab.url);
     q("fav").style.backgroundImage = tab.favIconUrl ? `url("${tab.favIconUrl}")` : "";

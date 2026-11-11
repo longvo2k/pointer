@@ -73,3 +73,49 @@ test("the popup learns when the hub is pinned to another profile, and can take i
   assert.deepEqual(await w.message({ type: "pointer:use-here" }), { ok: true });
   assert.deepEqual(w.events().at(-1), { event: "use" });
 });
+
+test("tab groups and notifications use the agent's colour and friendly name", async () => {
+  const w = await loadWorker({ tabs: [PAGE], settings: { notifyDone: true } });
+  await w.command("tabs.select", { tabId: 5, agent: "claude-code" });
+  const group = w.groups.get(w.tabs.get(5).groupId);
+  assert.equal(group.color, "orange");
+  assert.equal(group.title, "⌛ Claude");
+  await w.command("page.caption", { done: true, agent: "claude-code" });
+  assert.match(w.log.notifications.at(-1), /^pointer-done: Claude finished/);
+
+  const other = await loadWorker({ tabs: [PAGE] });
+  await other.command("tabs.select", { tabId: 5, agent: "abc" });
+  const g2 = other.groups.get(other.tabs.get(5).groupId);
+  assert.equal(g2.color, "blue");
+  assert.equal(g2.title, "⌛ abc");
+});
+
+test("the worker hands the page its fonts as bytes", async () => {
+  const w = await loadWorker({ tabs: [PAGE] });
+  const fonts = await w.message({ type: "pointer:fonts" });
+  assert.ok(fonts.caveat.length > 1000, "caveat base64");
+  assert.ok(fonts.patrick.length > 1000, "patrick base64");
+});
+
+test("switching the look restyles the agent's open tab at once", async () => {
+  const w = await loadWorker({ tabs: [PAGE] });
+  await w.command("tabs.select", { tabId: 5, agent: "codex" });
+  await w.command("page.snapshot", { agent: "codex" });
+  await w.changeSettings({ look: "sketch" });
+  const last = w.log.pageMessages.filter((m) => m.type === "pointer:presence").at(-1);
+  assert.equal(last.tabId, 5);
+  assert.equal(last.params.look, "sketch");
+  assert.equal(last.params.agentLabel, "Codex");
+  assert.equal(last.params.colour.group, "green");
+});
+
+test("a very long agent name is cut in the group title, and keeps one colour", async () => {
+  const name = "my-very-long-research-agent-with-a-name";
+  const w = await loadWorker({ tabs: [PAGE] });
+  await w.command("tabs.select", { tabId: 5, agent: name });
+  const group = w.groups.get(w.tabs.get(5).groupId);
+  assert.equal(group.title, "⌛ " + name.slice(0, 24));
+  const again = await loadWorker({ tabs: [PAGE] });
+  await again.command("tabs.select", { tabId: 5, agent: name });
+  assert.equal(again.groups.get(again.tabs.get(5).groupId).color, group.color);
+});

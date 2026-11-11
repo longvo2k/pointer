@@ -19,9 +19,11 @@ export const DEFAULT_SETTINGS = Object.freeze({
   escStops: true,
   clickStops: true,
   blockedSites: Object.freeze([]),
+  look: "classic",
 });
 
 const CURSOR_SPEEDS = new Set(["watchable", "fast"]);
+const LOOKS = new Set(["classic", "sketch"]);
 
 /** Stored settings with every missing or malformed value replaced by its default. */
 export function withDefaults(stored) {
@@ -31,6 +33,7 @@ export function withDefaults(stored) {
     if (typeof def === "boolean") out[key] = typeof src[key] === "boolean" ? src[key] : def;
   }
   out.cursorSpeed = CURSOR_SPEEDS.has(src.cursorSpeed) ? src.cursorSpeed : DEFAULT_SETTINGS.cursorSpeed;
+  out.look = LOOKS.has(src.look) ? src.look : DEFAULT_SETTINGS.look;
   const sites = [];
   for (const raw of Array.isArray(src.blockedSites) ? src.blockedSites : []) {
     if (typeof raw !== "string") continue;

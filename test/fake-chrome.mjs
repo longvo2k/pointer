@@ -2,7 +2,14 @@
 // the real extension/background.js in node and drive it like the hub would.
 // It covers what the tests need, not all of Chrome.
 
+import { readFile } from "node:fs/promises";
+
 let loads = 0;
+
+// The worker reads its own files with fetch(chrome.runtime.getURL(...)); node's fetch has no file: URLs.
+const realFetch = globalThis.fetch;
+globalThis.fetch = async (url, ...rest) =>
+  String(url).startsWith("file:") ? new Response(await readFile(new URL(String(url)))) : realFetch(url, ...rest);
 
 /**
  * Load a fresh copy of the worker against a new fake browser.
@@ -49,6 +56,7 @@ export async function loadWorker({ tabs = [], groups = [], settings = {}, sessio
     runtime: {
       id: "pointer-test",
       getManifest: () => ({ version: "test" }),
+      getURL: (p) => new URL(`../extension/${p}`, import.meta.url).href,
       getPlatformInfo: async () => ({ os: "mac" }),
       onMessage: ev(listeners.runtime),
       onStartup: ev(),
@@ -190,6 +198,11 @@ export async function loadWorker({ tabs = [], groups = [], settings = {}, sessio
           if (f(msg, { id: "pointer-test" }, resolve) !== true) resolve();
         }
       });
+    },
+    /** The human changes settings on the settings page. */
+    async changeSettings(next) {
+      for (const f of listeners.storage) f({ pointerSettings: { newValue: next } }, "local");
+      await tick(10);
     },
     /** Events the worker sent the hub (not replies to commands). */
     events: () => socket.events,

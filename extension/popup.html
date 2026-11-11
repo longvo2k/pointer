@@ -2,43 +2,14 @@
 <html>
   <head>
     <meta charset="utf-8" />
+    <link rel="stylesheet" href="looks.css" />
+    <script src="look.js"></script>
     <style>
-      :root {
-        color-scheme: light dark;
-        --bg: #ffffff;
-        --surface: #f6f6f8;
-        --border: #e4e4e9;
-        --text: #18181b;
-        --muted: #71717a;
-        --accent: #7c3aed;
-        --ok: #16a34a;
-        --warn: #d97706;
-        --off: #a1a1aa;
-        --danger: #dc2626;
-        --danger-hover: #b91c1c;
-        --hover: #ececf0;
-      }
-      @media (prefers-color-scheme: dark) {
-        :root {
-          --bg: #18181b;
-          --surface: #222226;
-          --border: #313137;
-          --text: #f4f4f5;
-          --muted: #a1a1aa;
-          --accent: #a78bfa;
-          --ok: #22c55e;
-          --warn: #f59e0b;
-          --off: #71717a;
-          --danger: #ef4444;
-          --danger-hover: #dc2626;
-          --hover: #2c2c31;
-        }
-      }
       * { box-sizing: border-box; }
       body {
         width: 300px; margin: 0; padding: 14px;
         background: var(--bg); color: var(--text);
-        font: 13px/1.4 ui-sans-serif, -apple-system, "Segoe UI", sans-serif;
+        font: 13px/1.4 var(--font-ui);
         user-select: none; -webkit-user-select: none;
       }
 
@@ -46,7 +17,7 @@
       .logo {
         width: 22px; height: 22px; border-radius: 6px; flex: none;
         display: grid; place-items: center;
-        background: var(--accent); color: #fff;
+        background: var(--accent); color: var(--on-accent);
       }
       h1 { font-size: 14px; font-weight: 650; margin: 0; flex: 1; }
 
@@ -54,7 +25,7 @@
         display: inline-flex; align-items: center; gap: 6px;
         padding: 3px 9px; border-radius: 999px;
         background: var(--surface); border: 1px solid var(--border);
-        font-size: 11.5px; font-weight: 600;
+        font-size: 12px; font-weight: 600;
       }
       .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--off); }
       .pill[data-state="connected"] .dot { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 22%, transparent); }
@@ -64,11 +35,14 @@
         background: var(--surface); border: 1px solid var(--border);
         border-radius: 10px; padding: 10px 12px;
       }
-      .label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 6px; }
+      .label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 6px; }
       .agent { display: flex; align-items: center; gap: 6px; font-weight: 600; margin-bottom: 8px; }
+      .agent .tag.stopped { background: #b45309; }
+      :root[data-look="sketch"] .agent .tag.stopped { background: linear-gradient(transparent 18%, #fde68a 18%, #fde68a 88%, transparent 88%); }
+      .agent-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; background: var(--agent, var(--accent)); }
       .agent .tag {
-        font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 999px;
-        color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent);
+        font-size: 12px; font-weight: 600; padding: 1px 7px; border-radius: 999px;
+        color: #fff; background: var(--agent-strong, #6d28d9);
       }
 
       .tab {
@@ -86,7 +60,7 @@
       .tab-text { min-width: 0; flex: 1; }
       .tab-title, .tab-host { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .tab-title { font-weight: 550; }
-      .tab-host { font-size: 11.5px; color: var(--muted); }
+      .tab-host { font-size: 12px; color: var(--muted); }
       .go { color: var(--muted); flex: none; }
 
       .empty { color: var(--muted); font-size: 12.5px; padding: 2px 0; }
@@ -106,14 +80,14 @@
         display: flex; align-items: center; justify-content: center; gap: 7px;
       }
       .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-      .btn-danger { background: var(--danger); color: #fff; border: 1px solid var(--danger); }
+      .btn-danger { background: var(--danger); color: var(--on-danger); border: 1px solid var(--danger); }
       .btn-danger:hover { background: var(--danger-hover); border-color: var(--danger-hover); }
       .btn-secondary { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
       .btn-secondary:hover { background: var(--hover); }
       .btn:disabled { opacity: .45; cursor: default; }
-      .hint { margin: 6px 0 0; color: var(--muted); font-size: 11.5px; text-align: center; }
+      .hint { margin: 6px 0 0; color: var(--muted); font-size: 12px; text-align: center; }
       kbd {
-        font: 600 10.5px ui-monospace, SFMono-Regular, Menlo, monospace;
+        font: 600 12px var(--font-mono);
         padding: 0 4px; border: 1px solid var(--border); border-bottom-width: 2px;
         border-radius: 4px; background: var(--surface);
       }
@@ -121,24 +95,25 @@
       footer {
         margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border);
         display: flex; align-items: center; justify-content: space-between; gap: 8px;
-        font-size: 11.5px; color: var(--muted);
+        font-size: 12px; color: var(--muted);
       }
-      .hub { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .hub { font-family: var(--font-mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .link {
-        border: 0; background: none; padding: 0; cursor: pointer;
-        color: var(--accent); font: inherit; font-weight: 600; flex: none;
+        border: 0; background: none; cursor: pointer; min-height: 24px; padding: 2px 6px; margin: -2px -6px;
+        border-radius: 6px; color: var(--accent); font: inherit; font-weight: 600; flex: none;
       }
-      .link:hover { text-decoration: underline; }
+      .link:hover { background: var(--hover); }
+      .link:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
       .gear {
-        border: 0; background: none; color: var(--muted); padding: 4px; margin: -4px -4px -4px 0;
-        border-radius: 6px; cursor: pointer; display: grid; place-items: center; flex: none;
+        border: 0; background: none; color: var(--muted); width: 28px; height: 28px; padding: 0; margin: -4px -6px -4px 0;
+        border-radius: 7px; cursor: pointer; display: grid; place-items: center; flex: none;
       }
       .gear:hover { background: var(--hover); color: var(--text); }
       .gear:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
       [hidden] { display: none !important; }
     </style>
   </head>
-  <body>
+  <body class="popup">
     <header>
       <div class="logo" aria-hidden="true">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M4 2.5 20 11l-7 2-3.5 7.5z"/></svg>
@@ -158,7 +133,7 @@
     <section class="card">
       <div class="label">Agent</div>
       <div id="active" hidden>
-        <div class="agent"><span id="agent-name">agent</span><span class="tag" id="agent-tag">driving</span></div>
+        <div class="agent"><span class="agent-dot" aria-hidden="true"></span><span id="agent-name">agent</span><span class="tag" id="agent-tag">driving</span></div>
         <button class="tab" id="tab" title="Show this tab">
           <span class="fav" id="fav"></span>
           <span class="tab-text">
@@ -190,6 +165,6 @@
       <button class="link" id="reconnect">Reconnect</button>
     </footer>
 
-    <script src="popup.js"></script>
+    <script type="module" src="popup.js"></script>
   </body>
 </html>
