@@ -121,6 +121,12 @@ match → error listing them. `"auto"` still means follow focus.
 
 If the profile is open: pin to it, as today.
 
+**Is Chrome running at all** (final-review finding). Chrome keeps `last_active_profiles` after a
+normal quit, to reopen those profiles next time. So a profile counts as running only while Chrome
+runs: on macOS and Linux, `<user data dir>/SingletonLock` is a symlink to `<host>-<pid>` and that pid
+is alive. Windows has no such link; there `last_active_profiles` is used as is. A profile Pointer
+was connected from counts as running for 60 s after it was last seen (Chrome writes the list late).
+
 **Open in Chrome, but Pointer not connected yet** (builder-check finding). Right after the hub starts,
 a profile that is already running can take up to ~30 s to reconnect (retry backoff, then the 30 s
 keepalive alarm). Launching Chrome into it would open a second window in front of the human. So
