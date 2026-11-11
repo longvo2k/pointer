@@ -108,3 +108,14 @@ test("switching the look restyles the agent's open tab at once", async () => {
   assert.equal(last.params.agentLabel, "Codex");
   assert.equal(last.params.colour.group, "green");
 });
+
+test("a very long agent name is cut in the group title, and keeps one colour", async () => {
+  const name = "my-very-long-research-agent-with-a-name";
+  const w = await loadWorker({ tabs: [PAGE] });
+  await w.command("tabs.select", { tabId: 5, agent: name });
+  const group = w.groups.get(w.tabs.get(5).groupId);
+  assert.equal(group.title, "⌛ " + name.slice(0, 24));
+  const again = await loadWorker({ tabs: [PAGE] });
+  await again.command("tabs.select", { tabId: 5, agent: name });
+  assert.equal(again.groups.get(again.tabs.get(5).groupId).color, group.color);
+});

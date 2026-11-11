@@ -37,3 +37,9 @@ test("the palette matches the spec", () => {
   assert.deepEqual(PALETTE.pink, { group: "pink", edge: "#ec4899", strong: "#be185d", light: "#f9a8d4", soft: "#fbd5e8" });
   assert.deepEqual(PALETTE.purple, { group: "purple", edge: "#8b5cf6", strong: "#6d28d9", light: "#c4b5fd", soft: "#e4dcfd" });
 });
+
+test("a very long name stays itself and gets a spare colour", () => {
+  const name = "x".repeat(500);
+  assert.equal(agentLabel(name), name);
+  assert.ok(["blue", "pink", "purple"].includes(agentColour(name).key));
+});
