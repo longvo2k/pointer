@@ -19,13 +19,14 @@ after(async () => {
 });
 
 /** A fake Chrome user data dir: Work (Default), Personal (Profile 4, no Pointer), Client X (Profile 5). */
-function chromeDir({ running = ["Default", "Profile 4"], extra = {} } = {}) {
+function chromeDir({ running = ["Default", "Profile 4"], extra = {}, bare = {} } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pointer-hubprof-"));
   const info_cache = {
     Default: { name: "Work", user_name: "w@co.com" },
     "Profile 4": { name: "Personal", user_name: "me@home.com" },
     "Profile 5": { name: "Client X", user_name: "x@client.com" },
     ...extra,
+    ...bare, // listed by Chrome, but Pointer was never added there
   };
   fs.writeFileSync(path.join(dir, "Local State"), JSON.stringify({ profile: { info_cache, last_active_profiles: running } }));
   for (const p of ["Default", "Profile 5", ...Object.keys(extra)]) {
@@ -257,4 +258,39 @@ test("a connection id still works where a profile is expected", async () => {
   assert.equal(res.ok, true, res.error);
   assert.equal(res.result.active, ghost.id());
   ghost.ws.close();
+});
+
+test("a name shared by two profiles picks the one with Pointer", async () => {
+  const dir = chromeDir({ bare: { "Profile 8": { name: "Work", user_name: "old@co.com" } } });
+  const hub = await startHub({ chromeDir: dir, launch: fakeLauncher() });
+  const work = await fakeBrowser(hub, dir, "Default", "inst-dup");
+  const res = await rpc(hub, "ext.use", { profile: "Work" });
+  assert.equal(res.ok, true, res.error);
+  assert.equal(res.result.profile.dir, "Default");
+  work.ws.close();
+});
+
+test("a name still shared after that lists email and folder", async () => {
+  const dir = chromeDir({ extra: { "Profile 8": { name: "Work", user_name: "old@co.com" } } });
+  const hub = await startHub({ chromeDir: dir, launch: fakeLauncher() });
+  const res = await rpc(hub, "ext.use", { profile: "Work" });
+  assert.equal(res.ok, false);
+  assert.match(res.error, /Work \(w@co\.com, Default\)/);
+  assert.match(res.error, /Work \(old@co\.com, Profile 8\)/);
+});
+
+test("a profile seen connected earlier is waited for, not opened again", async () => {
+  // Chrome updates last_active_profiles late, so a profile it just opened may look closed there.
+  const dir = chromeDir({ running: ["Default"] });
+  const launch = fakeLauncher();
+  const hub = await startHub({ chromeDir: dir, launch });
+  const x = await fakeBrowser(hub, dir, "Profile 5", "inst-seen");
+  x.ws.close();
+  await wait(60);
+  const res = await rpc(hub, "ext.use", { profile: "Client X" });
+  assert.equal(res.ok, false);
+  assert.match(res.error, /Client X is open in Chrome, but Pointer isn't connected there/);
+  assert.deepEqual(launch.calls, []);
+  const list = (await rpc(hub, "ext.profiles", {})).result;
+  assert.equal(byName(list, "Client X").running, true);
 });
