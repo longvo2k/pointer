@@ -12,6 +12,7 @@ import {
   hasPointer,
   matchProfile,
   launchCommand,
+  chromeIsRunning,
 } from "../lib/profiles.mjs";
 
 const EXT = "a".repeat(32);
@@ -52,6 +53,7 @@ test("user data dir per OS", () => {
 
 test("reads names, emails and which are running", () => {
   const dir = fixture({ localState: LOCAL_STATE });
+  fs.symlinkSync(`myhost-${process.pid}`, path.join(dir, "SingletonLock")); // Chrome is running
   assert.deepEqual(readProfiles(dir), {
     profiles: [
       { dir: "Default", name: "Work", email: "w@co.com", running: true },
@@ -127,4 +129,22 @@ test("launch arguments", () => {
     args: ["--profile-directory=Café 'Work'"],
   });
   assert.throws(() => launchCommand("Default", { platform: "win32", env: { PROGRAMFILES: "C:\\PF" }, exists: () => false }), /not found/);
+});
+
+test("chrome is running only when its lock names a live process", () => {
+  const dir = fixture({ localState: LOCAL_STATE });
+  assert.equal(chromeIsRunning(dir, { platform: "darwin" }), false, "no lock: Chrome is not running");
+  fs.symlinkSync(`myhost-${process.pid}`, path.join(dir, "SingletonLock"));
+  assert.equal(chromeIsRunning(dir, { platform: "darwin" }), true, "lock names a live pid");
+  const stale = fixture({ localState: LOCAL_STATE });
+  fs.symlinkSync("myhost-999999", path.join(stale, "SingletonLock"));
+  assert.equal(chromeIsRunning(stale, { platform: "linux", alive: () => false }), false, "lock left by a crash");
+  assert.equal(chromeIsRunning(dir, { platform: "win32" }), null, "unknown on Windows");
+});
+
+test("when Chrome is not running, no profile is running", () => {
+  const dir = fixture({ localState: LOCAL_STATE });
+  assert.equal(readProfiles(dir, { platform: "darwin" }).profiles[0].running, false);
+  fs.symlinkSync(`myhost-${process.pid}`, path.join(dir, "SingletonLock"));
+  assert.equal(readProfiles(dir, { platform: "darwin" }).profiles[0].running, true);
 });

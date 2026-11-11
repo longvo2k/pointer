@@ -19,8 +19,9 @@ after(async () => {
 });
 
 /** A fake Chrome user data dir: Work (Default), Personal (Profile 4, no Pointer), Client X (Profile 5). */
-function chromeDir({ running = ["Default", "Profile 4"], extra = {}, bare = {} } = {}) {
+function chromeDir({ running = ["Default", "Profile 4"], extra = {}, bare = {}, chromeUp = true } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pointer-hubprof-"));
+  if (chromeUp) fs.symlinkSync(`testhost-${process.pid}`, path.join(dir, "SingletonLock"));
   const info_cache = {
     Default: { name: "Work", user_name: "w@co.com" },
     "Profile 4": { name: "Personal", user_name: "me@home.com" },
@@ -279,11 +280,11 @@ test("a name still shared after that lists email and folder", async () => {
   assert.match(res.error, /Work \(old@co\.com, Profile 8\)/);
 });
 
-test("a profile seen connected earlier is waited for, not opened again", async () => {
+test("a profile seen connected moments ago is waited for, not opened again", async () => {
   // Chrome updates last_active_profiles late, so a profile it just opened may look closed there.
   const dir = chromeDir({ running: ["Default"] });
   const launch = fakeLauncher();
-  const hub = await startHub({ chromeDir: dir, launch });
+  const hub = await startHub({ chromeDir: dir, launch, seenGraceMs: 5000 });
   const x = await fakeBrowser(hub, dir, "Profile 5", "inst-seen");
   x.ws.close();
   await wait(60);
@@ -293,4 +294,67 @@ test("a profile seen connected earlier is waited for, not opened again", async (
   assert.deepEqual(launch.calls, []);
   const list = (await rpc(hub, "ext.profiles", {})).result;
   assert.equal(byName(list, "Client X").running, true);
+});
+
+test("a profile seen long ago and closed since is opened again", async () => {
+  const dir = chromeDir({ running: ["Default"] });
+  let hub;
+  const launch = fakeLauncher({ connect: (p) => fakeBrowser(hub, dir, p, "inst-again2") });
+  hub = await startHub({ chromeDir: dir, launch, seenGraceMs: 50 });
+  const x = await fakeBrowser(hub, dir, "Profile 5", "inst-again1");
+  x.ws.close();
+  await wait(150);
+  const res = await rpc(hub, "ext.use", { profile: "Client X" });
+  assert.equal(res.ok, true, res.error);
+  assert.deepEqual(launch.calls, ["Profile 5"]);
+  assert.equal(res.result.opened, true);
+});
+
+test("when Chrome was quit, a profile it remembers is opened, not waited for", async () => {
+  // Chrome keeps last_active_profiles on quit, to reopen them next time.
+  const dir = chromeDir({ running: ["Default", "Profile 5"], chromeUp: false });
+  let hub;
+  const launch = fakeLauncher({ connect: (p) => fakeBrowser(hub, dir, p, "inst-quit") });
+  hub = await startHub({ chromeDir: dir, launch });
+  const res = await rpc(hub, "ext.use", { profile: "Client X" });
+  assert.equal(res.ok, true, res.error);
+  assert.deepEqual(launch.calls, ["Profile 5"]);
+  const list = (await rpc(hub, "ext.profiles", {})).result;
+  assert.equal(byName(list, "Work").running, false);
+});
+
+test("a prefix of two profiles is an error even when only one has Pointer", async () => {
+  const dir = chromeDir({ bare: { "Profile 6": { name: "Workshop", user_name: "" } } });
+  const launch = fakeLauncher();
+  const hub = await startHub({ chromeDir: dir, launch });
+  const res = await rpc(hub, "ext.use", { profile: "wor" });
+  assert.equal(res.ok, false);
+  assert.match(res.error, /Workshop/);
+  assert.deepEqual(launch.calls, []);
+});
+
+test("two profiles with the same name, and no other profile, still pick the one with Pointer", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pointer-two-"));
+  fs.symlinkSync(`testhost-${process.pid}`, path.join(dir, "SingletonLock"));
+  fs.writeFileSync(path.join(dir, "Local State"), JSON.stringify({ profile: { info_cache: { Default: { name: "Long", user_name: "a@x.com" }, "Profile 2": { name: "Long", user_name: "b@x.com" } }, last_active_profiles: ["Default"] } }));
+  fs.mkdirSync(path.join(dir, "Default", "Local Extension Settings", EXT), { recursive: true });
+  const hub = await startHub({ chromeDir: dir, launch: fakeLauncher() });
+  const b = await fakeBrowser(hub, dir, "Default", "inst-long");
+  const res = await rpc(hub, "ext.use", { profile: "long" });
+  assert.equal(res.ok, true, res.error);
+  assert.equal(res.result.profile.dir, "Default");
+  b.ws.close();
+});
+
+test("a launch that fails says why at once", async () => {
+  const dir = chromeDir({ running: ["Default"] });
+  const launch = async () => {
+    throw new Error("spawn google-chrome ENOENT");
+  };
+  const hub = await startHub({ chromeDir: dir, launch, launchWaitMs: 5000 });
+  const t0 = Date.now();
+  const res = await rpc(hub, "ext.use", { profile: "Client X" });
+  assert.equal(res.ok, false);
+  assert.match(res.error, /Google Chrome could not be started for Client X: spawn google-chrome ENOENT/);
+  assert.ok(Date.now() - t0 < 2000, "no 20 s wait");
 });

@@ -499,3 +499,8 @@ test("browsers_list still flags a stale extension copy", async () => {
   const out = await callTool(profilesHub(stale), "browsers_list", {});
   assert.match(out.text, /Personal .*stale: files are v0\.3\.0, Chrome runs 0\.2\.9/);
 });
+
+test("browser_use { profile } on an older hub explains the restart", async () => {
+  const old = { port: 1, call: async (m) => { if (m === "ext.use") throw new Error('Pass a browser id, or "auto"'); return []; } };
+  await assert.rejects(callTool(old, "browser_use", { profile: "Work" }), /older Pointer.*restart/i);
+});
