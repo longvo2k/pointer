@@ -8,7 +8,7 @@ import { Hub, unpackedExtensionId } from "../lib/hub.mjs";
 
 const EXT_ORIGIN = "chrome-extension://" + "a".repeat(32);
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-let port = 18790 + Math.floor(Math.random() * 500);
+let port = 0; // set once the hub has a free port
 
 function request(path, { method = "GET", headers = {}, body } = {}) {
   return new Promise((resolve) => {
@@ -66,7 +66,8 @@ function rpc(method, params) {
 
 let hub;
 before(async () => {
-  hub = await new Hub({ port, followIdleMs: 300, previewTimeoutMs: 300, extensionIds: ["a".repeat(32)] }).start();
+  hub = await new Hub({ port: 0, followIdleMs: 300, previewTimeoutMs: 300, extensionIds: ["a".repeat(32)] }).start();
+  port = hub.port;
 });
 after(async () => {
   await hub.stop();
@@ -354,4 +355,15 @@ test("verification calls get the checks' timeout on top of the usual wait", asyn
   assert.equal(rpcTimeout("page.verify", { text: "x" }), 35000);
   assert.equal(rpcTimeout("page.act", { ref: "e1", expect: { text: "x", timeout: 20000 } }), 50000);
   assert.equal(rpcTimeout("page.press", { key: "Enter", expect: { text: "x", timeout: 999999 } }), 60000);
+});
+
+test("a hub started on port 0 reports the free port it got", async () => {
+  const free = await new Hub({ port: 0, extensionIds: ["a".repeat(32)] }).start();
+  try {
+    assert.ok(free.port > 0, `port is ${free.port}`);
+    const res = await fetch(`http://127.0.0.1:${free.port}/health`);
+    assert.equal(res.status, 200);
+  } finally {
+    await free.stop();
+  }
 });

@@ -12,7 +12,6 @@ import { Hub } from "../lib/hub.mjs";
 const EXT = "a".repeat(32);
 const ORIGIN = "chrome-extension://" + EXT;
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-let nextPort = 19400 + Math.floor(Math.random() * 400);
 const hubs = [];
 after(async () => {
   for (const h of hubs) await h.stop();
@@ -37,8 +36,7 @@ function chromeDir({ running = ["Default", "Profile 4"], extra = {}, bare = {}, 
 }
 
 async function startHub(opts = {}) {
-  const port = nextPort++;
-  const hub = await new Hub({ port, extensionIds: [EXT], previewTimeoutMs: 300, launchWaitMs: 400, runningWaitMs: 400, ...opts }).start();
+  const hub = await new Hub({ port: 0, extensionIds: [EXT], previewTimeoutMs: 300, launchWaitMs: 400, runningWaitMs: 400, ...opts }).start();
   hubs.push(hub);
   return hub;
 }
