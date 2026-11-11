@@ -27,6 +27,7 @@ import {
   notificationText,
 } from "./presence.js";
 import { SETTINGS_KEY, withDefaults } from "./settings.js";
+import { agentLabel, agentColour } from "./agents.js";
 import { isBlockedUrl } from "./sites.js";
 import { parseRequestSpec, matchRequest, combine, visibleUrl } from "./verify.js";
 
@@ -119,7 +120,8 @@ let modifier = "Meta"; // set from platform info
 
 // Chrome's tab-group palette. Purple matches Pointer's accent; the title comes
 // from the hub's agent name, so Claude shows up as a "Claude" group.
-const GROUP_COLOR = "purple";
+/** Each agent's tab group has its own colour (agents.js); "agent" keeps the old purple. */
+const groupColour = () => agentColour(agentName).group;
 const GROUP_TITLE_MAX = 24;
 
 // Toggle when hunting a slow command; logs go to the extension worker console.
@@ -368,6 +370,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     sendResponse({ ok: true });
     return;
   }
+  if (msg.type === "pointer:fonts") {
+    // The Sketch look on web pages: font bytes, not URLs, so pages cannot detect Pointer by its files.
+    fontBytes()
+      .then((fonts) => sendResponse({ ok: true, ...fonts }))
+      .catch(() => sendResponse({ ok: false }));
+    return true;
+  }
   if (msg.type === "pointer:hello") {
     sendResponse({ ok: true, connected });
     return;
@@ -504,8 +513,26 @@ async function openBackgroundTab(url) {
   return chrome.tabs.create({ windowId, url, active: false });
 }
 
+let fontCache = null;
+/** Sketch fonts as base64, read once from the extension's own files. */
+function fontBytes() {
+  const read = async (file) => {
+    const buf = new Uint8Array(await (await fetch(chrome.runtime.getURL(`fonts/${file}`))).arrayBuffer());
+    let bin = "";
+    for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+    return btoa(bin);
+  };
+  fontCache ??= Promise.all([read("caveat.woff2"), read("patrick-hand.woff2")])
+    .then(([caveat, patrick]) => ({ caveat, patrick }))
+    .catch((err) => {
+      fontCache = null;
+      throw err;
+    });
+  return fontCache;
+}
+
 function agentGroupTitle() {
-  const name = (agentName || "agent").trim().slice(0, GROUP_TITLE_MAX) || "agent";
+  const name = agentLabel(agentName).slice(0, GROUP_TITLE_MAX) || "agent";
   return (settings.groupStatus ? groupPrefix(presence) : "") + name;
 }
 
@@ -534,7 +561,7 @@ async function ensureAgentGroup(tabId) {
     if (tab.groupId != null && tab.groupId !== chrome.tabGroups.TAB_GROUP_ID_NONE) {
       if (tab.groupId === known) {
         await chrome.tabGroups
-          .update(tab.groupId, { title, color: GROUP_COLOR })
+          .update(tab.groupId, { title, color: groupColour() })
           .catch(() => {});
         return tab.groupId;
       }
@@ -572,7 +599,7 @@ async function ensureAgentGroup(tabId) {
 
     agentGroups.set(tab.windowId, groupId);
     saveState();
-    await chrome.tabGroups.update(groupId, { title, color: GROUP_COLOR }).catch(() => {});
+    await chrome.tabGroups.update(groupId, { title, color: groupColour() }).catch(() => {});
     return groupId;
   });
 }
@@ -581,7 +608,7 @@ async function refreshGroupLabels() {
   const title = agentGroupTitle();
   await Promise.all(
     [...new Set(agentGroups.values())].map((groupId) =>
-      chrome.tabGroups.update(groupId, { title, color: GROUP_COLOR }).catch(() => {})
+      chrome.tabGroups.update(groupId, { title, color: groupColour() }).catch(() => {})
     )
   );
 }
@@ -1673,7 +1700,7 @@ async function notifyFor(kind) {
   try {
     if (tab?.url) host = new URL(tab.url).hostname.replace(/^www\./, "") || host;
   } catch {}
-  const { title, message } = notificationText(kind, { agent: agentName, actions: presence.actions, host });
+  const { title, message } = notificationText(kind, { agent: agentLabel(agentName), actions: presence.actions, host });
   await chrome.notifications.create(`pointer-${kind}`, {
     type: "basic",
     iconUrl: "icons/icon128.png",

@@ -376,11 +376,19 @@ While an agent works in a tab, Pointer draws a thin line around it and a bar at 
 | "name is waiting for you" in amber | you stopped it; it must ask you before going on | `✋ name` |
 | "✅ name finished here" | the agent said it is done | `✅ name` |
 
+Each agent has its own colour on the line, the cursor, the bar and its Chrome tab group: Claude
+orange, Codex green, Cursor cyan, and any other agent blue, pink or purple (the same one every
+time, picked from its name). Known agents show by name, so `claude-code` reads "Claude". A stopped
+agent is amber whatever its colour. While an agent works, the line glows and a light runs round it;
+with your system's "reduce motion" on, it stays still.
+
 None of this shows up in the agent's screenshots.
 
 Open the settings from the gear in the Pointer popup, or right-click the toolbar icon and choose
 **Options**. You can:
 
+- pick a **Look**: Classic (clean and quiet) or Sketch (hand-drawn, with handwritten labels). It
+  changes the popup, the settings page, and what Pointer draws on web pages;
 - turn the bar, the line, the action labels, and the tab-group marks on or off, and pick a Fast cursor;
 - get a notification when the agent finishes or is waiting for you (Chrome asks once; off until you
   turn it on, and only when you are looking at something else);
@@ -541,7 +549,9 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Run `npm test` before sending a change.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE). The Sketch look ships two fonts under the SIL Open Font License 1.1:
+[Caveat](https://github.com/googlefonts/caveat) and Patrick Hand by Patrick Wagesreiter (licences in
+`extension/fonts/`).
 
 ## Acknowledgements
 

@@ -274,3 +274,13 @@ test("reads after say done keep the done mark; an action starts a new task", () 
     assert.equal(cmd(done, method, { url: "https://example.com" }, 2500).state, "active", method);
   }
 });
+
+test("the view carries the look, the agent's friendly name and colour", async () => {
+  const { viewOf: view, initialPresence: init } = await import("../extension/presence.js");
+  const v = view(init(), { look: "sketch" }, "claude-code");
+  assert.equal(v.look, "sketch");
+  assert.equal(v.agent, "claude-code");
+  assert.equal(v.agentLabel, "Claude");
+  assert.equal(v.colour.key, "claude");
+  assert.equal(view(init(), {}, "abc").look, "classic");
+});

@@ -9,6 +9,7 @@
  * "quiet" is a guess (no command for a minute); "done" is the agent saying so.
  * Pure: plain JSON in and out, no chrome.* calls, `now` always passed in.
  */
+import { agentLabel, agentColour } from "./agents.js";
 
 export const THINKING_MS = 2000;
 export const QUIET_MS = 60_000;
@@ -209,6 +210,9 @@ export function viewOf(p, settings, agent) {
   return {
     mode: off ? "off" : p.state,
     agent: String(agent || "agent"),
+    agentLabel: agentLabel(agent),
+    colour: agentColour(agent),
+    look: settings.look === "sketch" ? "sketch" : "classic",
     text: p.text,
     step: p.step,
     lastAction: p.lastAction,

@@ -4,51 +4,22 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Pointer settings</title>
+    <link rel="stylesheet" href="looks.css" />
+    <script src="look.js"></script>
     <style>
-      :root {
-        color-scheme: light dark;
-        --bg: #ffffff;
-        --surface: #f6f6f8;
-        --border: #e4e4e9;
-        --line: #ececf0;
-        --text: #18181b;
-        --muted: #71717a;
-        --accent: #7c3aed;
-        --ok: #16a34a;
-        --warn: #d97706;
-        --off: #a1a1aa;
-        --danger: #dc2626;
-        --hover: #ececf0;
-        --switch-off: #d4d4d8;
-      }
-      @media (prefers-color-scheme: dark) {
-        :root {
-          --bg: #18181b;
-          --surface: #222226;
-          --border: #313137;
-          --line: #2c2c31;
-          --text: #f4f4f5;
-          --muted: #a1a1aa;
-          --accent: #a78bfa;
-          --ok: #22c55e;
-          --warn: #f59e0b;
-          --off: #71717a;
-          --danger: #ef4444;
-          --hover: #2c2c31;
-          --switch-off: #3f3f46;
-        }
-      }
       * { box-sizing: border-box; }
       body {
         margin: 0; background: var(--bg); color: var(--text);
-        font: 14px/1.45 ui-sans-serif, -apple-system, "Segoe UI", sans-serif;
+        font: 14px/1.45 var(--font-ui);
       }
       .layout { display: grid; grid-template-columns: 210px minmax(0, 720px); gap: 0 40px; max-width: 1000px; margin: 0 auto; padding: 32px 24px 64px; }
       nav { position: sticky; top: 32px; align-self: start; }
       .brand { display: flex; gap: 10px; align-items: center; font-weight: 650; font-size: 16px; margin: 0 0 18px 8px; }
-      .logo { width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; background: var(--accent); color: #fff; }
+      .logo { width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; background: var(--accent); color: var(--on-accent); }
       nav a { display: block; padding: 6px 10px; border-radius: 7px; color: var(--muted); text-decoration: none; margin-bottom: 2px; }
       nav a:hover { background: var(--hover); color: var(--text); }
+      nav a.on { background: var(--hover); color: var(--text); font-weight: 600; }
+      nav a:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
       nav .ver { margin: 22px 10px 0; font-size: 12px; color: var(--muted); }
       main section { margin-bottom: 32px; scroll-margin-top: 24px; }
       h2 { font-size: 17px; margin: 0 0 2px; }
@@ -61,15 +32,19 @@
       .row .t span { color: var(--muted); font-size: 13px; }
       .switch { position: relative; width: 36px; height: 20px; flex: none; }
       .switch input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
-      .switch span { position: absolute; inset: 0; border-radius: 999px; background: var(--switch-off); transition: background 150ms; pointer-events: none; }
-      .switch span::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.25); transition: left 150ms; }
-      .switch input:checked + span { background: var(--accent); }
-      .switch input:checked + span::after { left: 18px; }
+      /* Off: an outlined track with a grey knob, so it reads as a switch (≥ 3:1). */
+      .switch span { position: absolute; inset: 0; border-radius: 999px; background: var(--bg); box-shadow: inset 0 0 0 1.5px var(--switch-line); transition: background 150ms; pointer-events: none; }
+      .switch span::after { content: ""; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: var(--switch-line); transition: left 150ms; }
+      .switch input:checked + span { background: var(--accent); box-shadow: none; }
+      .switch input:checked + span::after { background: var(--on-accent); }
+      .switch input:checked + span::after { left: 19px; }
       .switch input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
-      .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; flex: none; }
+      .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; flex: none; background: var(--surface); }
       .seg label { padding: 5px 12px; font-size: 13px; cursor: pointer; }
+      .seg label + label { border-left: 1px solid var(--border); }
+      .seg label:hover { background: var(--hover); }
       .seg input { position: absolute; opacity: 0; pointer-events: none; }
-      .seg label:has(input:checked) { background: var(--accent); color: #fff; }
+      .seg label:has(input:checked) { background: var(--accent); color: var(--on-accent); font-weight: 600; }
       .seg label:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: -2px; }
       button.btn { border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 8px; padding: 6px 12px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; flex: none; }
       button.btn:hover { background: var(--hover); }
@@ -82,7 +57,8 @@
       .sites .site { display: flex; align-items: center; gap: 10px; padding: 9px 14px; border-top: 1px solid var(--line); font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; }
       .sites .site:first-child { border-top: 0; }
       .sites .site span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .sites .x { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 15px; padding: 2px 6px; border-radius: 6px; }
+      .sites .x { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 15px; min-width: 24px; min-height: 24px; padding: 2px 6px; border-radius: 6px; }
+      .sites .x:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
       .sites .x:hover { background: var(--hover); color: var(--text); }
       .empty { color: var(--muted); font-size: 13px; padding: 12px 14px; }
       .add { display: flex; gap: 8px; padding: 12px 14px; border-top: 1px solid var(--line); }
@@ -90,7 +66,7 @@
       .add input:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; }
       .error { color: var(--danger); font-size: 13px; margin: 8px 2px 0; min-height: 1em; }
       .note { color: var(--muted); font-size: 13px; margin: 8px 2px 0; }
-      .saved { position: fixed; right: 20px; bottom: 20px; background: var(--text); color: var(--bg); padding: 8px 14px; border-radius: 10px; font-size: 13px; opacity: 0; transition: opacity 200ms; pointer-events: none; }
+      .saved { position: fixed; right: 20px; bottom: 20px; background: var(--toast-bg); color: var(--toast-text); padding: 8px 14px; border-radius: 10px; font-size: 13px; opacity: 0; transition: opacity 200ms; pointer-events: none; }
       .saved.on { opacity: 1; }
       [hidden] { display: none !important; }
       @media (max-width: 720px) {
@@ -109,7 +85,8 @@
           Pointer
         </div>
         <div class="links">
-          <a href="#general">General</a>
+          <a href="#general">Connection</a>
+          <a href="#appearance">Appearance</a>
           <a href="#page">On the page</a>
           <a href="#notifications">Notifications</a>
           <a href="#stopping">Stopping</a>
@@ -121,7 +98,7 @@
 
       <main>
         <section id="general">
-          <h2>Connection</h2>
+          <h2><span>Connection</span></h2>
           <p class="desc">Pointer talks only to the hub on this computer.</p>
           <div class="card">
             <div class="row">
@@ -135,8 +112,22 @@
           </div>
         </section>
 
+        <section id="appearance">
+          <h2><span>Appearance</span></h2>
+          <p class="desc">How Pointer looks in this popup, on this page, and on the pages agents work in.</p>
+          <div class="card">
+            <div class="row">
+              <div class="t"><b>Look</b><span>Classic is clean and quiet. Sketch is hand-drawn, on web pages too.</span></div>
+              <div class="seg" role="radiogroup" aria-label="Look">
+                <label><input type="radio" name="look" value="classic" />Classic</label>
+                <label><input type="radio" name="look" value="sketch" />Sketch</label>
+              </div>
+            </div>
+          </div>
+        </section>
+
         <section id="page">
-          <h2>On the page</h2>
+          <h2><span>On the page</span></h2>
           <p class="desc">What you see in a tab while an agent works in it. None of it shows up in the agent's screenshots.</p>
           <div class="card">
             <div class="row">
@@ -166,7 +157,7 @@
         </section>
 
         <section id="notifications">
-          <h2>Notifications</h2>
+          <h2><span>Notifications</span></h2>
           <p class="desc">Only when you are looking at another tab or app.</p>
           <div class="card">
             <div class="row">
@@ -190,7 +181,7 @@
         </section>
 
         <section id="stopping">
-          <h2>Stopping</h2>
+          <h2><span>Stopping</span></h2>
           <p class="desc">Any of these stops the agent. It stays stopped until you tell it to continue. The popup's Stop button always works.</p>
           <div class="card">
             <div class="row">
@@ -210,7 +201,7 @@
         </section>
 
         <section id="sites">
-          <h2>Sites</h2>
+          <h2><span>Sites</span></h2>
           <p class="desc">Agents can't open, read, or act on these. Good for banking, health, or admin pages.</p>
           <div class="card sites">
             <div id="site-list"></div>
@@ -223,7 +214,7 @@
         </section>
 
         <section id="privacy">
-          <h2>Privacy</h2>
+          <h2><span>Privacy</span></h2>
           <div class="card">
             <div class="row"><div class="t"><b>Hidden from agents</b><span>Passwords, one-time codes, card numbers, and secret values in links</span></div></div>
             <div class="row"><div class="t"><b>No outside servers</b><span>Pointer talks only to 127.0.0.1. No accounts, analytics, or telemetry.</span></div></div>

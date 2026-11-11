@@ -2,6 +2,7 @@
 // the service worker and open agent tabs pick it up from there.
 import { SETTINGS_KEY, withDefaults } from "./settings.js";
 import { normalizeSitePattern } from "./sites.js";
+import { agentLabel } from "./agents.js";
 
 const q = (id) => document.getElementById(id);
 let settings = withDefaults(undefined);
@@ -25,6 +26,7 @@ async function save(patch) {
 function render() {
   for (const input of document.querySelectorAll("input[data-key]")) input.checked = Boolean(settings[input.dataset.key]);
   for (const radio of document.querySelectorAll('input[name="cursorSpeed"]')) radio.checked = radio.value === settings.cursorSpeed;
+  for (const radio of document.querySelectorAll('input[name="look"]')) radio.checked = radio.value === settings.look;
   renderSites();
 }
 
@@ -62,6 +64,31 @@ for (const input of document.querySelectorAll("input[data-key]")) {
 for (const radio of document.querySelectorAll('input[name="cursorSpeed"]')) {
   radio.addEventListener("change", () => radio.checked && save({ cursorSpeed: radio.value }));
 }
+for (const radio of document.querySelectorAll('input[name="look"]')) {
+  radio.addEventListener("change", () => radio.checked && save({ look: radio.value }));
+}
+
+// The side menu marks the section you are reading.
+const navLinks = [...document.querySelectorAll("nav .links a")];
+function markSection(id) {
+  for (const a of navLinks) {
+    const on = a.getAttribute("href") === `#${id}`;
+    a.classList.toggle("on", on);
+    if (on) a.setAttribute("aria-current", "true");
+    else a.removeAttribute("aria-current");
+  }
+}
+const seen = new Map();
+const observer = new IntersectionObserver(
+  (entries) => {
+    for (const e of entries) seen.set(e.target.id, e.isIntersecting ? e.intersectionRatio : 0);
+    const first = [...document.querySelectorAll("main section")].find((s) => seen.get(s.id) > 0);
+    if (first) markSection(first.id);
+  },
+  { rootMargin: "-10% 0px -55% 0px", threshold: [0, 0.01, 0.5, 1] }
+);
+for (const section of document.querySelectorAll("main section")) observer.observe(section);
+markSection(location.hash.slice(1) || "general");
 
 for (const input of document.querySelectorAll("input[data-notify]")) {
   input.addEventListener("change", () => setNotify(input));
@@ -153,7 +180,7 @@ async function refreshStatus() {
   agentTab = status?.lastTabId != null ? await chrome.tabs.get(status.lastTabId).catch(() => null) : null;
   const tabs = (status?.groups || []).reduce((n, g) => n + g.tabIds.length, 0);
   q("agent-text").textContent = agentTab
-    ? `${status.agentName || "agent"} · ${tabs || 1} tab${tabs === 1 ? "" : "s"} in its group`
+    ? `${agentLabel(status.agentName)} · ${tabs || 1} tab${tabs === 1 ? "" : "s"} in its group`
     : "No agent tab right now";
   q("show-tab").disabled = !agentTab;
 }
