@@ -145,30 +145,36 @@
         .caption .step { color: var(--agent-light); }
         .caption.stopped .who { background: #b45309; }
 
-        /* Classic edge: an inner glow that breathes, and a light that runs round the border. */
+        /* Classic edge. Only opacity and transform animate, so the GPU does the work and
+           the page is not repainted each frame. The glow is a layer that fades in and out;
+           the running light is a conic beam that rotates behind a ring-shaped mask. */
         .edge {
           border: 2px solid color-mix(in srgb, var(--agent-strong) 80%, transparent);
-          box-shadow: inset 0 0 0 1px rgba(255,255,255,.55), inset 0 0 22px 2px color-mix(in srgb, var(--agent) 30%, transparent);
+          box-shadow: inset 0 0 0 1px rgba(255,255,255,.55);
         }
-        .edge.on { animation: ptr-breathe 2.6s ease-in-out infinite alternate; }
-        :host([data-edge-light]) .edge.on:not(.amber)::before {
-          content: ""; position: absolute; inset: -2px; padding: 3px;
-          background: conic-gradient(from var(--pointer-edge-a), transparent 0 62%, var(--agent-light) 80%, var(--agent) 90%, transparent 96%);
+        .edge::after {
+          content: ""; position: absolute; inset: 0; opacity: .4;
+          box-shadow: inset 0 0 30px 4px color-mix(in srgb, var(--agent) 40%, transparent);
+        }
+        .edge.on::after { animation: ptr-glow 2.6s ease-in-out infinite alternate; }
+        .edge .ring {
+          display: none; position: absolute; inset: -2px; padding: 3px; overflow: hidden;
           -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
           -webkit-mask-composite: xor; mask-composite: exclude;
-          filter: drop-shadow(0 0 6px var(--agent));
-          animation: ptr-run 3.2s linear infinite;
         }
-        .edge.amber { border-color: rgba(217,119,6,.85); animation: ptr-wait 1.8s ease-in-out infinite alternate; }
-        @keyframes ptr-run { to { --pointer-edge-a: 360deg; } }
-        @keyframes ptr-breathe {
-          from { box-shadow: inset 0 0 0 1px rgba(255,255,255,.55), inset 0 0 14px 1px color-mix(in srgb, var(--agent) 22%, transparent); }
-          to { box-shadow: inset 0 0 0 1px rgba(255,255,255,.55), inset 0 0 30px 4px color-mix(in srgb, var(--agent) 40%, transparent); }
+        .edge.on:not(.amber) .ring { display: block; }
+        .edge .beam {
+          position: absolute; left: 50%; top: 50%; width: 300vmax; height: 300vmax; margin: -150vmax 0 0 -150vmax;
+          background: conic-gradient(transparent 0 62%, var(--agent-light) 80%, var(--agent) 90%, transparent 96%);
+          animation: ptr-spin 3.2s linear infinite; will-change: transform;
         }
-        @keyframes ptr-wait {
-          from { box-shadow: inset 0 0 0 1px rgba(255,255,255,.55), inset 0 0 10px 1px rgba(217,119,6,.18); }
-          to { box-shadow: inset 0 0 0 1px rgba(255,255,255,.55), inset 0 0 30px 5px rgba(217,119,6,.40); }
-        }
+        .edge.amber { border-color: rgba(217,119,6,.85); }
+        .edge.amber::after { box-shadow: inset 0 0 30px 5px rgba(217,119,6,.40); animation-duration: 1.8s; }
+        @keyframes ptr-glow { from { opacity: .35; } to { opacity: 1; } }
+        @keyframes ptr-spin { to { transform: rotate(360deg); } }
+        /* Hidden tabs: nothing to look at, so nothing animates. */
+        :host([data-hidden]) .edge::after, :host([data-hidden]) .edge::before, :host([data-hidden]) .edge .beam,
+        :host([data-hidden]) .edge { animation-play-state: paused !important; }
 
         /* Sketch: paper and ink. Fixed colours, so it reads on light and dark pages alike. */
         :host([data-look="sketch"]) .arrow path { fill: #fde68a; stroke: #1b1d21; stroke-width: 1.7; }
@@ -209,8 +215,9 @@
           box-shadow: inset 5px 5px 0 color-mix(in srgb, var(--agent) 20%, transparent), 0 0 0 1px rgba(255,255,255,.6);
         }
         :host([data-look="sketch"]) .edge.on { animation: ptr-boil .5s steps(1) infinite; }
+        :host([data-look="sketch"]) .edge .ring, :host([data-look="sketch"]) .edge::after { display: none; }
         :host([data-look="sketch"]) .edge.on:not(.amber)::before {
-          content: ""; position: absolute; inset: 5px; border-radius: inherit; padding: 0; filter: none; -webkit-mask: none;
+          content: ""; position: absolute; inset: 5px; border-radius: inherit;
           background:
             repeating-linear-gradient(90deg, color-mix(in srgb, var(--agent-strong) 60%, transparent) 0 10px, transparent 10px 18px) top / 100% 2px no-repeat,
             repeating-linear-gradient(90deg, color-mix(in srgb, var(--agent-strong) 60%, transparent) 0 10px, transparent 10px 18px) bottom / 100% 2px no-repeat,
@@ -232,9 +239,9 @@
           to { background-position: 18px 0, -18px 100%, 0 -18px, 100% 18px; }
         }
         @media (prefers-reduced-motion: reduce) {
-          .edge, .edge::before, :host([data-look="sketch"]) .edge { animation: none !important; }
-          :host([data-edge-light]) .edge.on::before { display: none; }
-          :host([data-look="sketch"]) .edge.on:not(.amber)::before { display: block; }
+          .edge, .edge::before, .edge::after, :host([data-look="sketch"]) .edge { animation: none !important; }
+          .edge::after { opacity: .7; }
+          .edge .ring { display: none !important; }
         }
       </style>
       <div class="glow"></div>
@@ -246,7 +253,7 @@
       <div class="label"></div>
       <div class="target"></div>
       <div class="spot"></div>
-      <div class="edge"></div>
+      <div class="edge"><div class="ring"><div class="beam"></div></div></div>
       <div class="caption"><span class="who"></span><span class="step"></span><span class="text"></span><button class="act" type="button"></button></div>
     `;
     (document.documentElement || document.body).appendChild(host);
@@ -473,15 +480,10 @@
     overlayHost.style.setProperty("visibility", on ? "visible" : "hidden", "important");
   }
 
-  // The running light on the Classic edge animates an <angle>; @property is ignored
-  // inside shadow roots, so register it here. If the page already registered it, fine.
-  let edgeLight = false;
-  try {
-    CSS.registerProperty({ name: "--pointer-edge-a", syntax: "<angle>", inherits: false, initialValue: "0deg" });
-    edgeLight = true;
-  } catch (err) {
-    edgeLight = err?.name === "InvalidModificationError";
-  }
+  // A hidden tab has nothing to look at: pause the edge animations until it shows again.
+  document.addEventListener("visibilitychange", () => {
+    overlayHost?.toggleAttribute("data-hidden", document.visibilityState === "hidden");
+  });
 
   let fontsAdded = false;
   /** Sketch fonts as bytes from the service worker: no URL a page could probe for. */
@@ -512,7 +514,6 @@
     if (!overlayHost) return;
     const look = v?.look === "sketch" ? "sketch" : "classic";
     overlayHost.setAttribute("data-look", look);
-    if (edgeLight) overlayHost.setAttribute("data-edge-light", "");
     const c = v?.colour;
     if (c) {
       overlayHost.style.setProperty("--agent", c.edge);
@@ -569,6 +570,7 @@
     const hidden = document.visibilityState === "hidden";
 
     edge.style.transition = hidden ? "none" : "";
+    overlayHost.toggleAttribute("data-hidden", hidden);
     edge.classList.toggle("on", Boolean(view?.edge) && ["active", "quiet", "stopped"].includes(mode));
     edge.classList.toggle("amber", mode === "stopped");
 
