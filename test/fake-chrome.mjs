@@ -199,6 +199,11 @@ export async function loadWorker({ tabs = [], groups = [], settings = {}, sessio
         }
       });
     },
+    /** The human changes settings on the settings page. */
+    async changeSettings(next) {
+      for (const f of listeners.storage) f({ pointerSettings: { newValue: next } }, "local");
+      await tick(10);
+    },
     /** Events the worker sent the hub (not replies to commands). */
     events: () => socket.events,
     /** A message from the hub that is not a command, like { event: "hub" }. */

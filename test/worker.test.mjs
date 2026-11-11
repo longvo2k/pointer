@@ -96,3 +96,15 @@ test("the worker hands the page its fonts as bytes", async () => {
   assert.ok(fonts.caveat.length > 1000, "caveat base64");
   assert.ok(fonts.patrick.length > 1000, "patrick base64");
 });
+
+test("switching the look restyles the agent's open tab at once", async () => {
+  const w = await loadWorker({ tabs: [PAGE] });
+  await w.command("tabs.select", { tabId: 5, agent: "codex" });
+  await w.command("page.snapshot", { agent: "codex" });
+  await w.changeSettings({ look: "sketch" });
+  const last = w.log.pageMessages.filter((m) => m.type === "pointer:presence").at(-1);
+  assert.equal(last.tabId, 5);
+  assert.equal(last.params.look, "sketch");
+  assert.equal(last.params.agentLabel, "Codex");
+  assert.equal(last.params.colour.group, "green");
+});

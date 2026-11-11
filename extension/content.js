@@ -134,6 +134,108 @@
           border: 2px solid rgba(37,99,235,.95); border-radius: 6px;
           box-shadow: 0 0 0 4px rgba(37,99,235,.22); opacity: 0; transition: opacity 160ms ease;
         }
+        /* ---- Look and agent colour (set on the host by applyLook) ---- */
+        :host { --agent: #3b82f6; --agent-strong: #1d4ed8; --agent-light: #93c5fd; --agent-soft: #dbe8fe; }
+        .glow { background: radial-gradient(circle, color-mix(in srgb, var(--agent) 45%, transparent) 0%, color-mix(in srgb, var(--agent) 18%, transparent) 45%, transparent 72%); }
+        .ripple { border-color: var(--agent-strong); background: color-mix(in srgb, var(--agent) 18%, transparent); }
+        .label b { color: var(--agent-light); }
+        .target { border-color: var(--agent-strong); background: color-mix(in srgb, var(--agent) 6%, transparent); }
+        .spot { border-color: var(--agent-strong); box-shadow: 0 0 0 4px color-mix(in srgb, var(--agent) 22%, transparent); }
+        .caption .who { background: var(--agent-strong); }
+        .caption .step { color: var(--agent-light); }
+        .caption.stopped .who { background: #b45309; }
+
+        /* Classic edge: an inner glow that breathes, and a light that runs round the border. */
+        .edge {
+          border: 2px solid color-mix(in srgb, var(--agent-strong) 80%, transparent);
+          box-shadow: inset 0 0 0 1px rgba(255,255,255,.55), inset 0 0 22px 2px color-mix(in srgb, var(--agent) 30%, transparent);
+        }
+        .edge.on { animation: ptr-breathe 2.6s ease-in-out infinite alternate; }
+        :host([data-edge-light]) .edge.on:not(.amber)::before {
+          content: ""; position: absolute; inset: -2px; padding: 3px;
+          background: conic-gradient(from var(--pointer-edge-a), transparent 0 62%, var(--agent-light) 80%, var(--agent) 90%, transparent 96%);
+          -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+          -webkit-mask-composite: xor; mask-composite: exclude;
+          filter: drop-shadow(0 0 6px var(--agent));
+          animation: ptr-run 3.2s linear infinite;
+        }
+        .edge.amber { border-color: rgba(217,119,6,.85); animation: ptr-wait 1.8s ease-in-out infinite alternate; }
+        @keyframes ptr-run { to { --pointer-edge-a: 360deg; } }
+        @keyframes ptr-breathe {
+          from { box-shadow: inset 0 0 0 1px rgba(255,255,255,.55), inset 0 0 14px 1px color-mix(in srgb, var(--agent) 22%, transparent); }
+          to { box-shadow: inset 0 0 0 1px rgba(255,255,255,.55), inset 0 0 30px 4px color-mix(in srgb, var(--agent) 40%, transparent); }
+        }
+        @keyframes ptr-wait {
+          from { box-shadow: inset 0 0 0 1px rgba(255,255,255,.55), inset 0 0 10px 1px rgba(217,119,6,.18); }
+          to { box-shadow: inset 0 0 0 1px rgba(255,255,255,.55), inset 0 0 30px 5px rgba(217,119,6,.40); }
+        }
+
+        /* Sketch: paper and ink. Fixed colours, so it reads on light and dark pages alike. */
+        :host([data-look="sketch"]) .arrow path { fill: #fde68a; stroke: #1b1d21; stroke-width: 1.7; }
+        :host([data-look="sketch"]) .label {
+          padding: 3px 10px 2px; background: #fffdf5; color: #1b1d21; border: 1.5px solid #1b1d21;
+          border-radius: 14px 255px 14px 225px / 225px 14px 255px 14px; rotate: -2deg;
+          font: 700 19px/1.1 "Pointer Caveat", "Comic Sans MS", cursive; box-shadow: 2px 3px 0 #1b1d21;
+        }
+        :host([data-look="sketch"]) .label b { color: var(--agent-strong); }
+        :host([data-look="sketch"]) .target {
+          border: 2.2px solid var(--agent-strong); background: transparent; scale: 1.12 1.4;
+          border-radius: 46% 54% 48% 52% / 55% 45% 55% 45%;
+        }
+        :host([data-look="sketch"]) .ripple { border-color: var(--agent-strong); background: transparent; border-radius: 46% 54% 50% 50%; }
+        :host([data-look="sketch"]) .spot { border-color: var(--agent-strong); border-radius: 14px 255px 14px 225px / 225px 14px 255px 14px; box-shadow: 3px 3px 0 color-mix(in srgb, var(--agent) 30%, transparent); }
+        :host([data-look="sketch"]) .caption {
+          background: #fffdf5; color: #1b1d21; border: 2px solid #1b1d21;
+          border-radius: 255px 14px 225px 14px / 14px 225px 14px 255px; box-shadow: 4px 4px 0 #1b1d21;
+          font: 17px/1.3 "Pointer Patrick", "Comic Sans MS", cursive;
+        }
+        :host([data-look="sketch"]) .caption .who {
+          border-radius: 0; color: #1b1d21; rotate: -2deg; font: 700 19px/1.2 "Pointer Caveat", "Comic Sans MS", cursive;
+          background: linear-gradient(transparent 15%, var(--agent-soft) 15%, var(--agent-soft) 90%, transparent 90%);
+        }
+        :host([data-look="sketch"]) .caption .step { color: var(--agent-strong); }
+        :host([data-look="sketch"]) .caption .text .dim { color: #5f636c; }
+        :host([data-look="sketch"]) .caption .act {
+          border: 2px solid #1b1d21; border-radius: 14px 255px 14px 225px / 225px 14px 255px 14px; background: #c62828; color: #fff;
+          font: 700 19px/1 "Pointer Caveat", "Comic Sans MS", cursive; padding: 4px 12px 3px; box-shadow: 2px 2px 0 #1b1d21;
+        }
+        :host([data-look="sketch"]) .caption.stopped .who { background: linear-gradient(transparent 15%, #fde68a 15%, #fde68a 90%, transparent 90%); }
+        :host([data-look="sketch"]) .caption.stopped .act { background: #fffdf5; color: #1b1d21; }
+        :host([data-look="sketch"]) .caption.chip .act { background: transparent; border-color: transparent; box-shadow: none; color: #5f636c; }
+        /* Sketch edge: a pencil line that boils like hand-drawn animation, with marching dashes inside. */
+        :host([data-look="sketch"]) .edge {
+          inset: 3px; border: 3px solid var(--agent-strong);
+          border-radius: 10px 6px 12px 5px / 6px 12px 5px 10px;
+          box-shadow: inset 5px 5px 0 color-mix(in srgb, var(--agent) 20%, transparent), 0 0 0 1px rgba(255,255,255,.6);
+        }
+        :host([data-look="sketch"]) .edge.on { animation: ptr-boil .5s steps(1) infinite; }
+        :host([data-look="sketch"]) .edge.on:not(.amber)::before {
+          content: ""; position: absolute; inset: 5px; border-radius: inherit; padding: 0; filter: none; -webkit-mask: none;
+          background:
+            repeating-linear-gradient(90deg, color-mix(in srgb, var(--agent-strong) 60%, transparent) 0 10px, transparent 10px 18px) top / 100% 2px no-repeat,
+            repeating-linear-gradient(90deg, color-mix(in srgb, var(--agent-strong) 60%, transparent) 0 10px, transparent 10px 18px) bottom / 100% 2px no-repeat,
+            repeating-linear-gradient(0deg, color-mix(in srgb, var(--agent-strong) 60%, transparent) 0 10px, transparent 10px 18px) left / 2px 100% no-repeat,
+            repeating-linear-gradient(0deg, color-mix(in srgb, var(--agent-strong) 60%, transparent) 0 10px, transparent 10px 18px) right / 2px 100% no-repeat;
+          animation: ptr-ants 1.2s linear infinite;
+        }
+        :host([data-look="sketch"]) .edge.amber {
+          border-color: #b45309; box-shadow: inset 5px 5px 0 rgba(180,83,9,.2), 0 0 0 1px rgba(255,255,255,.6);
+          animation: ptr-boil 1s steps(1) infinite;
+        }
+        @keyframes ptr-boil {
+          0% { border-radius: 10px 6px 12px 5px / 6px 12px 5px 10px; translate: 0 0; }
+          33% { border-radius: 6px 12px 5px 10px / 12px 5px 10px 6px; translate: .5px -.5px; }
+          66% { border-radius: 12px 5px 10px 6px / 5px 10px 6px 12px; translate: -.5px .5px; }
+        }
+        @keyframes ptr-ants {
+          from { background-position: 0 0, 0 100%, 0 0, 100% 0; }
+          to { background-position: 18px 0, -18px 100%, 0 -18px, 100% 18px; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .edge, .edge::before, :host([data-look="sketch"]) .edge { animation: none !important; }
+          :host([data-edge-light]) .edge.on::before { display: none; }
+          :host([data-look="sketch"]) .edge.on:not(.amber)::before { display: block; }
+        }
       </style>
       <div class="glow"></div>
       <svg class="arrow" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
@@ -371,6 +473,56 @@
     overlayHost.style.setProperty("visibility", on ? "visible" : "hidden", "important");
   }
 
+  // The running light on the Classic edge animates an <angle>; @property is ignored
+  // inside shadow roots, so register it here. If the page already registered it, fine.
+  let edgeLight = false;
+  try {
+    CSS.registerProperty({ name: "--pointer-edge-a", syntax: "<angle>", inherits: false, initialValue: "0deg" });
+    edgeLight = true;
+  } catch (err) {
+    edgeLight = err?.name === "InvalidModificationError";
+  }
+
+  let fontsAdded = false;
+  /** Sketch fonts as bytes from the service worker: no URL a page could probe for. */
+  function addSketchFonts() {
+    if (fontsAdded) return;
+    fontsAdded = true;
+    chrome.runtime
+      .sendMessage({ type: "pointer:fonts" })
+      .then((r) => {
+        if (!r?.ok) throw new Error("no fonts");
+        const bytes = (b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+        for (const [family, b64, desc] of [
+          ["Pointer Caveat", r.caveat, { weight: "500 700" }],
+          ["Pointer Patrick", r.patrick, {}],
+        ]) {
+          const face = new FontFace(family, bytes(b64), desc);
+          document.fonts.add(face);
+          face.load().catch(() => {});
+        }
+      })
+      .catch(() => {
+        fontsAdded = false; // system handwriting fonts stand in; try again next time
+      });
+  }
+
+  /** The look (Classic or Sketch) and the agent's colours, from the view the worker sends. */
+  function applyLook(v) {
+    if (!overlayHost) return;
+    const look = v?.look === "sketch" ? "sketch" : "classic";
+    overlayHost.setAttribute("data-look", look);
+    if (edgeLight) overlayHost.setAttribute("data-edge-light", "");
+    const c = v?.colour;
+    if (c) {
+      overlayHost.style.setProperty("--agent", c.edge);
+      overlayHost.style.setProperty("--agent-strong", c.strong);
+      overlayHost.style.setProperty("--agent-light", c.light);
+      overlayHost.style.setProperty("--agent-soft", c.soft);
+    }
+    if (look === "sketch") addSketchFonts();
+  }
+
   function setPresence(next) {
     // A new labelled command (open, read, scroll...) replaces the page's own last label.
     if (!next || next.lastAction !== view?.lastAction) pageAction = "";
@@ -383,21 +535,22 @@
 
   function barContent() {
     const mode = view?.mode || "off";
+    const agent = view?.agentLabel || view?.agent || "agent";
     const plain = { kind: "", who: "", step: caption.step, text: caption.text, dim: "", act: "" };
     if (mode === "off" || !view.bar) return { ...plain, show: caption.on };
     if (mode === "stopped") {
       return { show: true, kind: "stopped", who: "Stopped", step: "", dim: "", act: "Got it",
-        text: `${view.agent} is waiting for you. Reply in its chat to let it continue.` };
+        text: `${agent} is waiting for you. Reply in its chat to let it continue.` };
     }
     if (mode === "done") {
       const n = view.actions;
-      const text = view.doneText || `${view.agent} finished here · ${n} action${n === 1 ? "" : "s"}`;
+      const text = view.doneText || `${agent} finished here · ${n} action${n === 1 ? "" : "s"}`;
       return { show: true, kind: "chip", who: "", step: "", text: `✅ ${text}`, dim: "", act: "✕" };
     }
     if (mode === "quiet") {
-      return { show: true, kind: "chip", who: "", step: "", text: `No activity from ${view.agent} for a minute`, dim: "", act: "✕" };
+      return { show: true, kind: "chip", who: "", step: "", text: `No activity from ${agent} for a minute`, dim: "", act: "✕" };
     }
-    const base = { show: true, kind: "", who: view.agent, act: "■ Stop" };
+    const base = { show: true, kind: "", who: agent, act: "■ Stop" };
     if (caption.on) return { ...base, step: caption.step, text: caption.text, dim: "" };
     const doing = pageAction || view.lastAction;
     const thinking = !view.busy && Date.now() - view.lastActivityAt >= THINKING_MS;
@@ -409,6 +562,7 @@
   function renderBar() {
     if (!view && !caption.on && !ui.root) return; // nothing to draw yet
     initOverlay();
+    applyLook(view);
     const box = ui.root.querySelector(".caption");
     const edge = ui.root.querySelector(".edge");
     const mode = view?.mode || "off";
