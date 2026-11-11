@@ -533,7 +533,9 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Run `npm test` before sending a change.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE). The Sketch look ships two fonts under the SIL Open Font License 1.1:
+[Caveat](https://github.com/googlefonts/caveat) and Patrick Hand by Patrick Wagesreiter (licences in
+`extension/fonts/`).
 
 ## Acknowledgements
 

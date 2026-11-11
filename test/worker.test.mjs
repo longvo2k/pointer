@@ -73,3 +73,26 @@ test("the popup learns when the hub is pinned to another profile, and can take i
   assert.deepEqual(await w.message({ type: "pointer:use-here" }), { ok: true });
   assert.deepEqual(w.events().at(-1), { event: "use" });
 });
+
+test("tab groups and notifications use the agent's colour and friendly name", async () => {
+  const w = await loadWorker({ tabs: [PAGE], settings: { notifyDone: true } });
+  await w.command("tabs.select", { tabId: 5, agent: "claude-code" });
+  const group = w.groups.get(w.tabs.get(5).groupId);
+  assert.equal(group.color, "orange");
+  assert.equal(group.title, "⌛ Claude");
+  await w.command("page.caption", { done: true, agent: "claude-code" });
+  assert.match(w.log.notifications.at(-1), /^pointer-done: Claude finished/);
+
+  const other = await loadWorker({ tabs: [PAGE] });
+  await other.command("tabs.select", { tabId: 5, agent: "abc" });
+  const g2 = other.groups.get(other.tabs.get(5).groupId);
+  assert.equal(g2.color, "blue");
+  assert.equal(g2.title, "⌛ abc");
+});
+
+test("the worker hands the page its fonts as bytes", async () => {
+  const w = await loadWorker({ tabs: [PAGE] });
+  const fonts = await w.message({ type: "pointer:fonts" });
+  assert.ok(fonts.caveat.length > 1000, "caveat base64");
+  assert.ok(fonts.patrick.length > 1000, "patrick base64");
+});
