@@ -358,3 +358,23 @@ test("a launch that fails says why at once", async () => {
   assert.match(res.error, /Google Chrome could not be started for Client X: spawn google-chrome ENOENT/);
   assert.ok(Date.now() - t0 < 2000, "no 20 s wait");
 });
+
+test("a profile closed just now is opened again once Chrome has written that it closed", async () => {
+  const dir = chromeDir({ running: ["Default", "Profile 5"] });
+  let hub;
+  const launch = fakeLauncher({ connect: (p) => fakeBrowser(hub, dir, p, "inst-reopen2") });
+  hub = await startHub({ chromeDir: dir, launch, seenGraceMs: 60000 });
+  const x = await fakeBrowser(hub, dir, "Profile 5", "inst-reopen1");
+  x.ws.close(); // the human closes Client X's windows
+  await wait(60);
+  // Chrome then rewrites Local State without it.
+  const file = path.join(dir, "Local State");
+  const state = JSON.parse(fs.readFileSync(file, "utf8"));
+  state.profile.last_active_profiles = ["Default"];
+  fs.writeFileSync(file, JSON.stringify(state));
+  const later = new Date(Date.now() + 1000);
+  fs.utimesSync(file, later, later);
+  const res = await rpc(hub, "ext.use", { profile: "Client X" });
+  assert.equal(res.ok, true, res.error);
+  assert.deepEqual(launch.calls, ["Profile 5"]);
+});
